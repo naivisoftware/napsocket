@@ -23,6 +23,8 @@ RTTI_BEGIN_CLASS(nap::SocketClient)
 	RTTI_PROPERTY("Endpoint",					&nap::SocketClient::mRemoteIp,						nap::rtti::EPropertyMetaData::Default)
 	RTTI_PROPERTY("Port",						&nap::SocketClient::mPort,							nap::rtti::EPropertyMetaData::Default)
     RTTI_PROPERTY("Connect on init",            &nap::SocketClient::mConnectOnInit,                 nap::rtti::EPropertyMetaData::Default)
+    RTTI_PROPERTY("Reconnect On Disconnect",    &nap::SocketClient::mEnableAutoReconnect,           nap::rtti::EPropertyMetaData::Default)
+    RTTI_PROPERTY("Reconnect Interval",         &nap::SocketClient::mAutoReconnectIntervalMillis,   nap::rtti::EPropertyMetaData::Default)
 RTTI_END_CLASS
 
 namespace nap
@@ -48,10 +50,11 @@ namespace nap
         // create socket
         mSocket = std::make_unique<tcp::socket>(getIOService());
 
-		// init UDPAdapter, registering the client to an SocketThread
+		// init SocketAdapter, registering the client to an SocketThread
 		if (!SocketAdapter::init(errorState))
 			return false;
 
+        // connect now if we need to
         if(mConnectOnInit)
             connect();
 
@@ -62,7 +65,12 @@ namespace nap
     void SocketClient::connect()
     {
         // try to open socket
-        mSocket->async_connect(*mRemoteEndpoint.get(), [this](const asio::error_code& errorCode){ handleConnect(errorCode); });
+        if(!mConnecting.load())
+        {
+            nap::Logger::info(*this, "Connecting");
+            mConnecting.store(true);
+            mSocket->async_connect(*mRemoteEndpoint.get(), [this](const asio::error_code& errorCode){ handleConnect(errorCode); });
+        }
     }
 
 
@@ -82,6 +90,7 @@ namespace nap
 
 	void SocketClient::send(const std::string& message)
 	{
+        // only queue messages if socket is ready
         if(mSocketReady.load())
         {
             mQueue.enqueue(message);
@@ -91,37 +100,72 @@ namespace nap
 
     void SocketClient::handleConnect(const asio::error_code& errorCode)
     {
+        // the process of connecting is finished, whether it succeeded or not
+        mConnecting.store(false);
+
+        // no error code
         if(!errorCode)
         {
             nap::Logger::info(*this, "Socket connected");
+
+            // socket is ready to be used
             mSocketReady.store(true);
 
-            while(mQueue.size_approx()>0)
-            {
-                std::string message;
-                mQueue.try_dequeue(message);
-            }
+            // reconnect timer can be stopped
+            mReconnectTimer.stop();
+
+            // message queue can be cleared
+            clearQueue();
         }else
         {
+            // log error to console
             nap::Logger::error(*this, errorCode.message());
+
+            // close socket
+            asio::error_code err;
+            mSocket->close(err);
+            if(err)
+            {
+                nap::Logger::error(*this, err.message());
+            }
+
+            // if auto reconnect is enabled start the reconnection timer
+            if(mEnableAutoReconnect)
+            {
+                mReconnectTimer.stop();
+                mReconnectTimer.reset();
+                mReconnectTimer.start();
+            }
         }
     }
 
 
     bool SocketClient::handleError(const asio::error_code& errorCode)
     {
+        // check if some error occurred, if so, close socket and start reconnecting if required
         if(errorCode)
         {
+            // some error occured, log it to console
             nap::Logger::error(*this, "Error occured, %s", errorCode.message().c_str());
             nap::Logger::info(*this, "Socket disconnected");
 
+            // close active socket
             asio::error_code err;
             mSocket->close(err);
             if (err)
             {
                 nap::Logger::error(*this, err.message());
             }
+
+            // socket is not ready
             mSocketReady.store(false);
+
+            // if auto reconnect is enabled start the reconnection time
+            if(mEnableAutoReconnect)
+            {
+                mReconnectTimer.reset();
+            }
+
             return true;
         }
 
@@ -144,11 +188,15 @@ namespace nap
                 {
                     mSocket->send(asio::buffer(message), asio::socket_base::message_end_of_record, err);
 
+                    // bail on error
                     if (handleError(err))
                         return;
                 }
 
+                // get available bytes to read
                 size_t available = mSocket->available(err);
+
+                // bail on error
                 if (handleError(err))
                     return;
 
@@ -157,15 +205,37 @@ namespace nap
                 asio::streambuf::mutable_buffers_type bufs = receivedStreamBuffer.prepare(available);
                 mSocket->receive(bufs, asio::socket_base::message_end_of_record, err);
 
+                // bail on error
                 if (handleError(err))
                     return;
 
+                // dispatch any received messages
                 if (bufs.size() > 0)
                 {
                     std::string received_message(asio::buffers_begin(bufs), asio::buffers_begin(bufs) + bufs.size());
                     messageReceived.trigger(received_message);
                 }
             }
+        }else
+        {
+            // check if we need to reconnect the socket
+            if(mEnableAutoReconnect && !mConnecting.load())
+            {
+                if(mReconnectTimer.getMillis().count() > mAutoReconnectIntervalMillis)
+                {
+                    connect();
+                }
+            }
         }
 	}
+
+
+    void SocketClient::clearQueue()
+    {
+        while(mQueue.size_approx()>0)
+        {
+            std::string message;
+            mQueue.try_dequeue(message);
+        }
+    }
 }

@@ -19,6 +19,7 @@
 #include <utility/threading.h>
 #include <concurrentqueue.h>
 #include <nap/signalslot.h>
+#include <nap/timer.h>
 
 // Local includes
 #include "socketadapter.h"
@@ -53,6 +54,8 @@ namespace nap
 		int mPort 							= 13251; 		///< Property: 'Port' the port the client socket binds to
 		std::string mRemoteIp 				= "10.8.0.3";	///< Property: 'Endpoint' the ip address the client socket binds to
 		bool mConnectOnInit                 = true;
+        bool mEnableAutoReconnect           = true;
+        int  mAutoReconnectIntervalMillis       = 5000;
 	protected:
 		/**
 		 * The process function
@@ -63,6 +66,8 @@ namespace nap
 
         bool handleError(const asio::error_code& errorCode);
 
+        void clearQueue();
+
 		// ASIO
 		std::unique_ptr<asio::ip::tcp::socket> 		mSocket;
         std::unique_ptr<asio::ip::tcp::endpoint> 	mRemoteEndpoint;
@@ -70,5 +75,7 @@ namespace nap
 		// Threading
 		moodycamel::ConcurrentQueue<std::string> 	mQueue;
         std::atomic_bool mSocketReady = { false };
+        std::atomic_bool mConnecting = { false };
+        SteadyTimer mReconnectTimer;
 	};
 }
