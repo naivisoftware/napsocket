@@ -22,6 +22,7 @@ using asio::ip::tcp;
 RTTI_BEGIN_CLASS(nap::SocketServer)
         RTTI_PROPERTY("Port",			&nap::SocketServer::mPort,			nap::rtti::EPropertyMetaData::Default)
         RTTI_PROPERTY("IP Address",		&nap::SocketServer::mIPAddress,	    nap::rtti::EPropertyMetaData::Default)
+        RTTI_PROPERTY("Enable Log",		&nap::SocketServer::mEnableLog,	    nap::rtti::EPropertyMetaData::Default)
 RTTI_END_CLASS
 
 namespace nap
@@ -49,15 +50,18 @@ namespace nap
                 return init_success;
         }
 
-        mSocket = std::make_unique<tcp::socket>(getIOService());
 
+
+        // create endpoint
         mRemoteEndpoint = std::make_unique<tcp::endpoint>(address, mPort);
-        mAcceptor = std::make_unique<tcp::acceptor>(getIOService(), *mRemoteEndpoint.get());
-        mAcceptor->async_accept(*mSocket.get(), [this](const asio::error_code& errorCode)
-        {
-           handleAccept(errorCode);
-        });
 
+        // create acceptor and attach the acceptor callback
+        mAcceptor = std::make_unique<tcp::acceptor>(getIOService(), *mRemoteEndpoint.get());
+
+        //
+        createNewSocket();
+
+        // init the adapter
         if(!SocketAdapter::init(errorState))
             return false;
 
@@ -65,21 +69,34 @@ namespace nap
     }
 
 
-    void SocketServer::handleAccept(const asio::error_code& errorCode)
+    void SocketServer::handleAccept(asio::ip::tcp::socket& socket, const asio::error_code& errorCode)
     {
         if(!errorCode)
         {
-            nap::Logger::info(*this, "Socket connected");
-            mSocketReady.store(true);
+            // log status
+            logInfo("Socket connected");
 
-            while(mQueue.size_approx()>0)
+            // read all available bytes, this is to make sure socket stream is empty before we start receiving new data
+            size_t available = socket.available();
+            asio::streambuf receivedStreamBuffer;
+            asio::streambuf::mutable_buffers_type bufs = receivedStreamBuffer.prepare(available);
+            asio::error_code err;
+            socket.receive(bufs, asio::socket_base::message_end_of_record, err);
+            if(err)
             {
-                std::string message;
-                mQueue.try_dequeue(message);
+                logError(err.message());
             }
+
+            //
+            createNewSocket();
         }else
         {
-            nap::Logger::error(*this, errorCode.message());
+            // log error
+            logError(errorCode.message());
+
+            mSocketsToRemove.emplace_back(&socket);
+
+            createNewSocket();
         }
     }
 
@@ -88,45 +105,47 @@ namespace nap
     {
         SocketAdapter::onDestroy();
 
-        mSocketReady.store(false);
-        asio::error_code asio_error_code;
-        mSocket->close(asio_error_code);
-
-        if (asio_error_code)
+        // close socket
+        for(auto& socket : mSockets)
         {
-            nap::Logger::error(*this, asio_error_code.message());
+            asio::error_code asio_error_code;
+            socket->close(asio_error_code);
+
+            // log any errors
+            if (asio_error_code)
+            {
+                logError(asio_error_code.message());
+            }
         }
+
+        mSockets.clear();
     }
 
 
     void SocketServer::send(const std::string &message)
     {
-        if(mSocketReady.load())
-        {
-            mQueue.enqueue(message);
-        }
+        mQueue.try_enqueue(message);
     }
 
 
-    bool SocketServer::handleError(const asio::error_code& errorCode)
+    bool SocketServer::handleError(asio::ip::tcp::socket& socket, const asio::error_code& errorCode)
     {
+        // has an error occured, close socket and re-attach acceptor callback
         if(errorCode)
         {
-            nap::Logger::error(*this, "Error occured, %s", errorCode.message().c_str());
-            nap::Logger::info(*this, "Socket disconnected");
+            // log any errors or info
+            logError(utility::stringFormat("Error occured, %s", errorCode.message().c_str()));
+            logInfo("Socket disconnected");
 
+            // close the socket
             asio::error_code err;
-            mSocket->close(err);
+            socket.close(err);
             if (err)
             {
-                nap::Logger::error(*this, err.message());
+                logError(err.message());
             }
-            mSocketReady.store(false);
 
-            mAcceptor->async_accept(*mSocket.get(), [this](const asio::error_code& errorCode)
-            {
-                handleAccept(errorCode);
-            });
+            mSocketsToRemove.emplace_back(&socket);
 
             return true;
         }
@@ -134,36 +153,76 @@ namespace nap
         return false;
     }
 
+
+    void SocketServer::createNewSocket()
+    {
+        // create socket
+        mSockets.emplace_back(std::make_unique<tcp::socket>(getIOService()));
+        auto* socket_ptr = mSockets[mSockets.size()-1].get();
+        mAcceptor->async_accept(*socket_ptr, [this, socket_ptr](const asio::error_code& errorCode)
+        {
+            handleAccept(*socket_ptr, errorCode);
+        });
+    }
+
     void SocketServer::process()
     {
-        if (mSocketReady.load())
+        std::vector<std::string> message_queue;
+        std::string message;
+        while (mQueue.try_dequeue(message))
         {
-            if(mSocket->is_open())
+            message_queue.emplace_back(message);
+        }
+
+        // first remove obsolete sockets
+        for(auto* socket_to_remove : mSocketsToRemove)
+        {
+            auto itr = std::find_if(mSockets.begin(), mSockets.end(), [socket_to_remove](const std::unique_ptr<tcp::socket>& socket)
+            {
+                return socket.get() == socket_to_remove;
+            });
+
+            if(itr!=mSockets.end());
+                mSockets.erase(itr);
+        }
+        mSocketsToRemove.clear();
+
+        for(auto& socket : mSockets)
+        {
+            if(socket->is_open())
             {
                 // error code
                 asio::error_code err;
 
                 // let the socket send queued messages
                 std::string message;
-                while (mQueue.try_dequeue(message))
+                for(auto& message : message_queue)
                 {
-                    mSocket->send(asio::buffer(message), asio::socket_base::message_end_of_record, err);
+                    socket->send(asio::buffer(message), asio::socket_base::message_end_of_record, err);
 
-                    if (handleError(err))
-                        return;
+                    if (handleError(*socket.get(), err))
+                        break;
                 }
 
-                size_t available = mSocket->available(err);
-                if (handleError(err))
-                    return;
+                // if we had a
+                if(err)
+                    continue;
+
+                // get available bytes
+                size_t available = socket->available(err);
+
+                // bail on error
+                if (handleError(*socket.get(), err))
+                    continue;
 
                 // receive incoming messages
                 asio::streambuf receivedStreamBuffer;
                 asio::streambuf::mutable_buffers_type bufs = receivedStreamBuffer.prepare(available);
-                mSocket->receive(bufs, asio::socket_base::message_end_of_record, err);
+                socket->receive(bufs, asio::socket_base::message_end_of_record, err);
 
-                if (handleError(err))
-                    return;
+                // bail on error
+                if (handleError(*socket.get(), err))
+                    continue;
 
                 if (bufs.size() > 0)
                 {
@@ -171,6 +230,34 @@ namespace nap
                     messageReceived.trigger(received_message);
                 }
             }
+        }
+    }
+
+
+    void SocketServer::logError(const std::string& message)
+    {
+        if(mEnableLog)
+        {
+            nap::Logger::error(*this, message);
+        }
+    }
+
+
+    void SocketServer::logInfo(const std::string& message)
+    {
+        if(mEnableLog)
+        {
+            nap::Logger::info(*this, message);
+        }
+    }
+
+
+    void SocketServer::clearQueue()
+    {
+        while(mQueue.size_approx()>0)
+        {
+            std::string message;
+            mQueue.try_dequeue(message);
         }
     }
 }

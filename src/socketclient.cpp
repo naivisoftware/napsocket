@@ -25,6 +25,7 @@ RTTI_BEGIN_CLASS(nap::SocketClient)
     RTTI_PROPERTY("Connect on init",            &nap::SocketClient::mConnectOnInit,                 nap::rtti::EPropertyMetaData::Default)
     RTTI_PROPERTY("Reconnect On Disconnect",    &nap::SocketClient::mEnableAutoReconnect,           nap::rtti::EPropertyMetaData::Default)
     RTTI_PROPERTY("Reconnect Interval",         &nap::SocketClient::mAutoReconnectIntervalMillis,   nap::rtti::EPropertyMetaData::Default)
+    RTTI_PROPERTY("Enable Log",                 &nap::SocketClient::mEnableLog,                     nap::rtti::EPropertyMetaData::Default)
 RTTI_END_CLASS
 
 namespace nap
@@ -67,7 +68,7 @@ namespace nap
         // try to open socket
         if(!mConnecting.load())
         {
-            nap::Logger::info(*this, "Connecting");
+            logInfo("Connecting");
             mConnecting.store(true);
             mSocket->async_connect(*mRemoteEndpoint.get(), [this](const asio::error_code& errorCode){ handleConnect(errorCode); });
         }
@@ -83,7 +84,7 @@ namespace nap
 		mSocket->close(err);
 		if (err)
 		{
-			nap::Logger::error(*this, "error closing socket : %s", err.message().c_str());
+            logInfo(utility::stringFormat("error closing socket : %s", err.message().c_str()));
 		}
 	}
 
@@ -106,7 +107,7 @@ namespace nap
         // no error code
         if(!errorCode)
         {
-            nap::Logger::info(*this, "Socket connected");
+            logInfo("Socket connected");
 
             // socket is ready to be used
             mSocketReady.store(true);
@@ -119,20 +120,19 @@ namespace nap
         }else
         {
             // log error to console
-            nap::Logger::error(*this, errorCode.message());
+            logError(errorCode.message());
 
             // close socket
             asio::error_code err;
             mSocket->close(err);
             if(err)
             {
-                nap::Logger::error(*this, err.message());
+                logError(err.message());
             }
 
             // if auto reconnect is enabled start the reconnection timer
             if(mEnableAutoReconnect)
             {
-                mReconnectTimer.stop();
                 mReconnectTimer.reset();
                 mReconnectTimer.start();
             }
@@ -146,15 +146,15 @@ namespace nap
         if(errorCode)
         {
             // some error occured, log it to console
-            nap::Logger::error(*this, "Error occured, %s", errorCode.message().c_str());
-            nap::Logger::info(*this, "Socket disconnected");
+            logError(utility::stringFormat("Error occured, %s", errorCode.message().c_str()));
+            logInfo("Socket disconnected");
 
             // close active socket
             asio::error_code err;
             mSocket->close(err);
             if (err)
             {
-                nap::Logger::error(*this, err.message());
+                logError(err.message());
             }
 
             // socket is not ready
@@ -236,6 +236,24 @@ namespace nap
         {
             std::string message;
             mQueue.try_dequeue(message);
+        }
+    }
+
+
+    void SocketClient::logError(const std::string& message)
+    {
+        if(mEnableLog)
+        {
+            nap::Logger::error(*this, message);
+        }
+    }
+
+
+    void SocketClient::logInfo(const std::string& message)
+    {
+        if(mEnableLog)
+        {
+            nap::Logger::info(*this, message);
         }
     }
 }

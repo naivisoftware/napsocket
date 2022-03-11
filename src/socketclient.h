@@ -55,7 +55,8 @@ namespace nap
 		std::string mRemoteIp 				= "10.8.0.3";	///< Property: 'Endpoint' the ip address the client socket binds to
 		bool mConnectOnInit                 = true;
         bool mEnableAutoReconnect           = true;
-        int  mAutoReconnectIntervalMillis       = 5000;
+        int  mAutoReconnectIntervalMillis   = 5000;
+        bool mEnableLog                     = false;
 	protected:
 		/**
 		 * The process function
@@ -67,6 +68,10 @@ namespace nap
         bool handleError(const asio::error_code& errorCode);
 
         void clearQueue();
+
+        void logError(const std::string& message);
+
+        void logInfo(const std::string& message);
 
 		// ASIO
 		std::unique_ptr<asio::ip::tcp::socket> 		mSocket;

@@ -19,6 +19,7 @@
 #include <asio/ts/internet.hpp>
 #include <asio/io_service.hpp>
 #include <asio/system_error.hpp>
+#include <asio/ts/internet.hpp>
 
 // Local includes
 #include "socketadapter.h"
@@ -48,6 +49,7 @@ namespace nap
         // properties
         int mPort 						= 13251;		///< Property: 'Port' the port the server socket binds to
         std::string mIPAddress			= "";	        ///< Property: 'IP Address' local ip address to bind to, if left empty will bind to any local address
+        bool mEnableLog                 = false;
     public:
         /**
          * packet received signal will be dispatched on the thread this UDPServer is registered to, see UDPThread
@@ -59,17 +61,25 @@ namespace nap
          */
         void process() override;
     private:
-        void handleAccept(const asio::error_code& errorCode);
+        void handleAccept(asio::ip::tcp::socket& socket, const asio::error_code& errorCode);
 
-        bool handleError(const asio::error_code& errorCode);
+        bool handleError(asio::ip::tcp::socket& socket, const asio::error_code& errorCode);
+
+        void logError(const std::string& message);
+
+        void logInfo(const std::string& message);
+
+        void clearQueue();
+
+        void createNewSocket();
 
         // ASIO
-        std::unique_ptr<asio::ip::tcp::socket> 		    mSocket;
-        std::unique_ptr<asio::ip::tcp::endpoint> 	    mRemoteEndpoint;
-        std::unique_ptr<asio::ip::tcp::acceptor>        mAcceptor;
+        std::vector<std::unique_ptr<asio::ip::tcp::socket>> 		    mSockets;
+        std::unique_ptr<asio::ip::tcp::endpoint> 	                    mRemoteEndpoint;
+        std::unique_ptr<asio::ip::tcp::acceptor>                        mAcceptor;
 
         // Threading
         moodycamel::ConcurrentQueue<std::string> 	mQueue;
-        std::atomic_bool mSocketReady = { false };
+        std::vector<asio::ip::tcp::socket*>         mSocketsToRemove;
     };
 }
