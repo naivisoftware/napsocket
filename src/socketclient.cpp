@@ -117,6 +117,9 @@ namespace nap
 
             // message queue can be cleared
             clearQueue();
+
+            //
+            connected.trigger();
         }else
         {
             // log error to console
@@ -165,6 +168,9 @@ namespace nap
             {
                 mReconnectTimer.reset();
             }
+
+            //
+            disconnected.trigger();
 
             return true;
         }

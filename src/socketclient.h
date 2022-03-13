@@ -48,7 +48,13 @@ namespace nap
 
         void connect();
 
+    public:
+        // Signals
         Signal<const std::string&> messageReceived;
+
+        Signal<> connected;
+
+        Signal<> disconnected;
 	public:
 		// properties
 		int mPort 							= 13251; 		///< Property: 'Port' the port the client socket binds to

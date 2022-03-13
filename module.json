@@ -2,7 +2,8 @@
     "Type": "nap::ModuleInfo",
     "mID": "ModuleInfo",
     "RequiredModules": [
-        "mod_napasio"
+        "mod_napasio",
+		"mod_napmath"
     ],
     "WindowsDllSearchPaths": []
 }

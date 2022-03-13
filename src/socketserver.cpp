@@ -14,6 +14,7 @@
 #include <nap/logger.h>
 
 #include <thread>
+#include <mathutils.h>
 
 
 using asio::ip::address;
@@ -51,7 +52,6 @@ namespace nap
         }
 
 
-
         // create endpoint
         mRemoteEndpoint = std::make_unique<tcp::endpoint>(address, mPort);
 
@@ -69,7 +69,7 @@ namespace nap
     }
 
 
-    void SocketServer::handleAccept(asio::ip::tcp::socket& socket, const asio::error_code& errorCode)
+    void SocketServer::handleAccept(const asio::error_code& errorCode)
     {
         if(!errorCode)
         {
@@ -77,24 +77,29 @@ namespace nap
             logInfo("Socket connected");
 
             // read all available bytes, this is to make sure socket stream is empty before we start receiving new data
-            size_t available = socket.available();
+            size_t available = mWaitingSocket->available();
             asio::streambuf receivedStreamBuffer;
             asio::streambuf::mutable_buffers_type bufs = receivedStreamBuffer.prepare(available);
             asio::error_code err;
-            socket.receive(bufs, asio::socket_base::message_end_of_record, err);
+            mWaitingSocket->receive(bufs, asio::socket_base::message_end_of_record, err);
             if(err)
             {
                 logError(err.message());
             }
 
+            // create new message queue
+            std::string socket_id = math::generateUUID();
+            mMessageQueue.emplace(socket_id, moodycamel::ConcurrentQueue<std::string>());
+            mSockets.emplace(socket_id, std::move(mWaitingSocket));
+
             //
             createNewSocket();
+
+            socketConnected.trigger(socket_id);
         }else
         {
             // log error
             logError(errorCode.message());
-
-            mSocketsToRemove.emplace_back(&socket);
 
             createNewSocket();
         }
@@ -106,10 +111,10 @@ namespace nap
         SocketAdapter::onDestroy();
 
         // close socket
-        for(auto& socket : mSockets)
+        for(auto& pair : mSockets)
         {
             asio::error_code asio_error_code;
-            socket->close(asio_error_code);
+            pair.second->close(asio_error_code);
 
             // log any errors
             if (asio_error_code)
@@ -122,13 +127,29 @@ namespace nap
     }
 
 
-    void SocketServer::send(const std::string &message)
+    void SocketServer::sendToAll(const std::string &message)
     {
-        mQueue.try_enqueue(message);
+        for(auto& pair : mMessageQueue)
+        {
+            pair.second.enqueue(message);
+        }
     }
 
 
-    bool SocketServer::handleError(asio::ip::tcp::socket& socket, const asio::error_code& errorCode)
+    void SocketServer::send(const std::string &id, const std::string &message)
+    {
+        auto itr = mMessageQueue.find(id);
+        if(itr!=mMessageQueue.end())
+        {
+            itr->second.enqueue(message);
+        }else
+        {
+            logError(utility::stringFormat("Cannot send message to socket, id %s not found!", id.c_str()));
+        }
+    }
+
+
+    bool SocketServer::handleError(const std::string& id, asio::error_code& errorCode)
     {
         // has an error occured, close socket and re-attach acceptor callback
         if(errorCode)
@@ -139,13 +160,16 @@ namespace nap
 
             // close the socket
             asio::error_code err;
-            socket.close(err);
+            auto itr = mSockets.find(id);
+            assert(itr!=mSockets.end());
+            itr->second->close(err);
             if (err)
             {
                 logError(err.message());
             }
 
-            mSocketsToRemove.emplace_back(&socket);
+            mSocketsToRemove.emplace_back(itr->first);
+            socketDisconnected.trigger(itr->first);
 
             return true;
         }
@@ -157,50 +181,42 @@ namespace nap
     void SocketServer::createNewSocket()
     {
         // create socket
-        mSockets.emplace_back(std::make_unique<tcp::socket>(getIOService()));
-        auto* socket_ptr = mSockets[mSockets.size()-1].get();
-        mAcceptor->async_accept(*socket_ptr, [this, socket_ptr](const asio::error_code& errorCode)
+        mWaitingSocket = std::make_unique<tcp::socket>(getIOService());
+        mAcceptor->async_accept(*mWaitingSocket, [this](const asio::error_code& errorCode)
         {
-            handleAccept(*socket_ptr, errorCode);
+            handleAccept(errorCode);
         });
     }
 
     void SocketServer::process()
     {
-        std::vector<std::string> message_queue;
-        std::string message;
-        while (mQueue.try_dequeue(message))
-        {
-            message_queue.emplace_back(message);
-        }
-
         // first remove obsolete sockets
-        for(auto* socket_to_remove : mSocketsToRemove)
+        for(const auto& socket_to_remove : mSocketsToRemove)
         {
-            auto itr = std::find_if(mSockets.begin(), mSockets.end(), [socket_to_remove](const std::unique_ptr<tcp::socket>& socket)
-            {
-                return socket.get() == socket_to_remove;
-            });
-
-            if(itr!=mSockets.end());
-                mSockets.erase(itr);
+            mSockets.erase(socket_to_remove);
+            mMessageQueue.erase(socket_to_remove);
         }
         mSocketsToRemove.clear();
 
-        for(auto& socket : mSockets)
+        for(auto& pair : mSockets)
         {
-            if(socket->is_open())
+            const auto& socket_id = pair.first;
+            auto& socket = *pair.second;
+            if(socket.is_open())
             {
                 // error code
                 asio::error_code err;
 
                 // let the socket send queued messages
                 std::string message;
-                for(auto& message : message_queue)
+                auto message_queue_itr = mMessageQueue.find(socket_id);
+                assert(message_queue_itr!=mMessageQueue.end());
+                auto& message_queue = message_queue_itr->second;
+                while(message_queue.try_dequeue(message))
                 {
-                    socket->send(asio::buffer(message), asio::socket_base::message_end_of_record, err);
+                    socket.send(asio::buffer(message), asio::socket_base::message_end_of_record, err);
 
-                    if (handleError(*socket.get(), err))
+                    if (handleError(socket_id, err))
                         break;
                 }
 
@@ -209,25 +225,25 @@ namespace nap
                     continue;
 
                 // get available bytes
-                size_t available = socket->available(err);
+                size_t available = socket.available(err);
 
                 // bail on error
-                if (handleError(*socket.get(), err))
+                if (handleError(socket_id, err))
                     continue;
 
                 // receive incoming messages
                 asio::streambuf receivedStreamBuffer;
                 asio::streambuf::mutable_buffers_type bufs = receivedStreamBuffer.prepare(available);
-                socket->receive(bufs, asio::socket_base::message_end_of_record, err);
+                socket.receive(bufs, asio::socket_base::message_end_of_record, err);
 
                 // bail on error
-                if (handleError(*socket.get(), err))
+                if (handleError(socket_id, err))
                     continue;
 
                 if (bufs.size() > 0)
                 {
                     std::string received_message(asio::buffers_begin(bufs), asio::buffers_begin(bufs) + bufs.size());
-                    messageReceived.trigger(received_message);
+                    messageReceived.trigger(socket_id, received_message);
                 }
             }
         }
@@ -254,10 +270,13 @@ namespace nap
 
     void SocketServer::clearQueue()
     {
-        while(mQueue.size_approx()>0)
+        for(auto& pair : mMessageQueue)
         {
-            std::string message;
-            mQueue.try_dequeue(message);
+            while(pair.second.size_approx()>0)
+            {
+                std::string message;
+                pair.second.try_dequeue(message);
+            }
         }
     }
 }

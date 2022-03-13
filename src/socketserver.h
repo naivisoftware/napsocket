@@ -44,26 +44,33 @@ namespace nap
          */
         virtual void onDestroy() override;
 
-        void send(const std::string& message);
+        void sendToAll(const std::string& message);
+
+        void send(const std::string& id, const std::string& message);
     public:
         // properties
         int mPort 						= 13251;		///< Property: 'Port' the port the server socket binds to
         std::string mIPAddress			= "";	        ///< Property: 'IP Address' local ip address to bind to, if left empty will bind to any local address
         bool mEnableLog                 = false;
     public:
+        // Signals
         /**
          * packet received signal will be dispatched on the thread this UDPServer is registered to, see UDPThread
          */
-        Signal<const std::string&> messageReceived;
+        Signal<const std::string&, const std::string&> messageReceived;
+
+        Signal<const std::string&> socketConnected;
+
+        Signal<const std::string&> socketDisconnected;
     protected:
         /**
          * The process function
          */
         void process() override;
     private:
-        void handleAccept(asio::ip::tcp::socket& socket, const asio::error_code& errorCode);
+        void handleAccept(const asio::error_code& errorCode);
 
-        bool handleError(asio::ip::tcp::socket& socket, const asio::error_code& errorCode);
+        bool handleError(const std::string& id, asio::error_code& errorCode);
 
         void logError(const std::string& message);
 
@@ -74,12 +81,13 @@ namespace nap
         void createNewSocket();
 
         // ASIO
-        std::vector<std::unique_ptr<asio::ip::tcp::socket>> 		    mSockets;
-        std::unique_ptr<asio::ip::tcp::endpoint> 	                    mRemoteEndpoint;
-        std::unique_ptr<asio::ip::tcp::acceptor>                        mAcceptor;
+        std::unique_ptr<asio::ip::tcp::socket>                                  mWaitingSocket;
+        std::unordered_map<std::string, std::unique_ptr<asio::ip::tcp::socket>> mSockets;
+        std::unique_ptr<asio::ip::tcp::endpoint> 	                            mRemoteEndpoint;
+        std::unique_ptr<asio::ip::tcp::acceptor>                                mAcceptor;
 
         // Threading
-        moodycamel::ConcurrentQueue<std::string> 	mQueue;
-        std::vector<asio::ip::tcp::socket*>         mSocketsToRemove;
+        std::unordered_map<std::string, moodycamel::ConcurrentQueue<std::string>> 	mMessageQueue;
+        std::vector<std::string>                    mSocketsToRemove;
     };
 }
