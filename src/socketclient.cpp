@@ -68,8 +68,9 @@ namespace nap
         // try to open socket
         if(!mConnecting.load())
         {
-            logInfo("Connecting");
             mConnecting.store(true);
+
+            logInfo("Connecting");
             mSocket->async_connect(*mRemoteEndpoint.get(), [this](const asio::error_code& errorCode){ handleConnect(errorCode); });
         }
     }
@@ -118,7 +119,7 @@ namespace nap
             // message queue can be cleared
             clearQueue();
 
-            //
+            // trigger connected signal
             connected.trigger();
         }else
         {
@@ -148,6 +149,9 @@ namespace nap
         // check if some error occurred, if so, close socket and start reconnecting if required
         if(errorCode)
         {
+            // socket is not ready
+            mSocketReady.store(false);
+
             // some error occured, log it to console
             logError(utility::stringFormat("Error occured, %s", errorCode.message().c_str()));
             logInfo("Socket disconnected");
@@ -160,16 +164,13 @@ namespace nap
                 logError(err.message());
             }
 
-            // socket is not ready
-            mSocketReady.store(false);
-
             // if auto reconnect is enabled start the reconnection time
             if(mEnableAutoReconnect)
             {
                 mReconnectTimer.reset();
             }
 
-            //
+            // trigger disconnected signal
             disconnected.trigger();
 
             return true;
