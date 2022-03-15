@@ -14,8 +14,8 @@ namespace nap
 	class SocketThread;
 
 	/**
-	 * The UDPService is responsible for processing any UDPThreads that have registered themselves to receive an
-	 * update call by the service. The Update Method of the UDPThread is set to "Main Thread" in that case
+	 * The SocketServer is responsible for processing any SocketThread that has registered itself to receive an
+	 * update call by the service. The Update Method of the SocketThread is set to "Main Thread" in that case
 	 */
 	class NAPAPI SocketService : public Service
 	{
@@ -36,32 +36,32 @@ namespace nap
 		virtual void registerObjectCreators(rtti::Factory& factory) override;
 
 		/**
-		 * initialization
+		 * Initialization
 		 * @param error contains error information
 		 * @return true on succes
 		 */
 		virtual bool init(utility::ErrorState& error) override;
 
 		/**
-		 * shuts down the service
+		 * Shuts down the service
 		 */
 		virtual void shutdown() override;
 
 		/**
-		 * update call wil call process on any registered UDPThreads
-		 * @param deltaTime time since last udpate
+		 * Update call wil call process on any registered SocketThread
+		 * @param deltaTime time since last update
 		 */
 		virtual void update(double deltaTime) override;
 
 	private:
 		/**
-		 * registers an SocketThread
+		 * Registers an SocketThread
 		 * @param thread the thread to register
 		 */
 		void registerSocketThread(SocketThread* thread);
 
 		/**
-		 * removes an SocketThread
+		 * Removes an SocketThread
 		 * @param thread the thread do remove
 		 */
 		void removeSocketThread(SocketThread* thread);

@@ -82,7 +82,7 @@ namespace nap
 
         mSocketReady.store(false);
 		asio::error_code err;
-		mSocket->close(err);
+		mSocket->shutdown(asio::socket_base::shutdown_both, err);
 		if (err)
 		{
             logInfo(utility::stringFormat("error closing socket : %s", err.message().c_str()));
@@ -108,10 +108,10 @@ namespace nap
         // no error code
         if(!errorCode)
         {
-            logInfo("Socket connected");
-
             // socket is ready to be used
             mSocketReady.store(true);
+
+            logInfo("Socket connected");
 
             // reconnect timer can be stopped
             mReconnectTimer.stop();
@@ -156,9 +156,9 @@ namespace nap
             logError(utility::stringFormat("Error occured, %s", errorCode.message().c_str()));
             logInfo("Socket disconnected");
 
-            // close active socket
+            // shutdown active socket
             asio::error_code err;
-            mSocket->close(err);
+            mSocket->shutdown(asio::socket_base::shutdown_both, err);
             if (err)
             {
                 logError(err.message());
@@ -222,6 +222,30 @@ namespace nap
                     std::string received_message(asio::buffers_begin(bufs), asio::buffers_begin(bufs) + bufs.size());
                     messageReceived.trigger(received_message);
                 }
+            }else
+            {
+                // log
+                logInfo("Socket disconnected");
+
+                // socket is not ready
+                mSocketReady.store(false);
+
+                // shutdown active socket
+                asio::error_code err;
+                mSocket->shutdown(asio::socket_base::shutdown_both, err);
+                if (err)
+                {
+                    logError(err.message());
+                }
+
+                // if auto reconnect is enabled start the reconnection time
+                if(mEnableAutoReconnect)
+                {
+                    mReconnectTimer.reset();
+                }
+
+                // trigger disconnected signal
+                disconnected.trigger();
             }
         }else
         {
@@ -244,6 +268,18 @@ namespace nap
             std::string message;
             mQueue.try_dequeue(message);
         }
+    }
+
+
+    bool SocketClient::isConnected() const
+    {
+        return mSocketReady.load();
+    }
+
+
+    bool SocketClient::isConnecting() const
+    {
+        return mConnecting.load();
     }
 
 

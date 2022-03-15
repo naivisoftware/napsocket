@@ -36,6 +36,14 @@ namespace nap
 	class SocketAdapter;
 	class SocketService;
 
+    /**
+     * SocketThread is responsible for creating an asio::io_service. Any attached SocketAdapters will use this service
+     * to create sockets or other objects dependent on the asio::io_service. The thread will call the asio::io_service
+     * poll method this updating any objects using the asio::io_service. The SocketThread can be updated on the Main thread
+     * or create it's own thread that will call process() on any SocketAdapters that use this SocketThread. You can also
+     * choose to update the SocketThread manually in which case you need to call manualProcess() yourself from some point
+     * in your application. This is useful when wanting to sync the process loop to other running threads in your application.
+     */
 	class NAPAPI SocketThread : public Device
 	{
 		friend class SocketService;
@@ -57,16 +65,16 @@ namespace nap
 		virtual bool start(utility::ErrorState& errorState) override;
 
 		/**
-		 * Stops the UDPThread, stops own thread or removes itself from service
+		 * Stops the SocketThread, stops own thread or removes itself from service
 		 */
 		virtual void stop() override;
 	public:
 		// properties
-		ESocketThreadUpdateMethod mUpdateMethod = ESocketThreadUpdateMethod::MAIN_THREAD; ///< Property: 'Update Method' the way the UDPThread should process adapters
+		ESocketThreadUpdateMethod mUpdateMethod = ESocketThreadUpdateMethod::MAIN_THREAD; ///< Property: 'Update Method' the way the SocketThread should process adapters
 
 		/**
 		 * Call this when update method is set to manual.
-		 If the update method is MAIN_THREAD or SPAWN_OWN_THREAD, this function will not do anything.
+		 * If the update method is MAIN_THREAD or SPAWN_OWN_THREAD, this function will not do anything.
 		 */
 		void manualProcess();
 	private:
@@ -80,14 +88,22 @@ namespace nap
 		 */
 		void process();
 
+        /**
+         * Register a socket adapter. Thread-safe
+         * @param adapter pointer to the socket adapter
+         */
 		void registerAdapter(SocketAdapter* adapter);
 
 		/**
-		 * removes an adapter. Thread-safe
-		 * @param adapter the SocketAdapter to remove
+		 * Removes an adapter. Thread-safe
+		 * @param adapter pointer to the socket adapter
 		 */
 		void removeAdapter(SocketAdapter* adapter);
 
+        /**
+         * Returns reference to asio::io_service
+         * @return reference to asio::io_service
+         */
         asio::io_service& getIOService(){ return mIOService; }
 
 		// threading

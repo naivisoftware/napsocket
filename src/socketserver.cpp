@@ -58,8 +58,8 @@ namespace nap
         // create acceptor and attach the acceptor callback
         mAcceptor = std::make_unique<tcp::acceptor>(getIOService(), *mRemoteEndpoint.get());
 
-        //
-        createNewSocket();
+        // create new accepting socket
+        acceptNewSocket();
 
         // init the adapter
         if(!SocketAdapter::init(errorState))
@@ -92,16 +92,18 @@ namespace nap
             mMessageQueue.emplace(socket_id, moodycamel::ConcurrentQueue<std::string>());
             mSockets.emplace(socket_id, std::move(mWaitingSocket));
 
-            //
-            createNewSocket();
+            // create new accepting socket
+            acceptNewSocket();
 
+            // dispatch signal
             socketConnected.trigger(socket_id);
         }else
         {
             // log error
             logError(errorCode.message());
 
-            createNewSocket();
+            // create new accepting socket
+            acceptNewSocket();
         }
     }
 
@@ -110,11 +112,11 @@ namespace nap
     {
         SocketAdapter::onDestroy();
 
-        // close socket
+        // shutdown sockets
         for(auto& pair : mSockets)
         {
             asio::error_code asio_error_code;
-            pair.second->close(asio_error_code);
+            pair.second->shutdown(asio::socket_base::shutdown_both,asio_error_code);
 
             // log any errors
             if (asio_error_code)
@@ -162,7 +164,7 @@ namespace nap
             asio::error_code err;
             auto itr = mSockets.find(id);
             assert(itr!=mSockets.end());
-            itr->second->close(err);
+            itr->second->shutdown(asio::socket_base::shutdown_both, err);
             if (err)
             {
                 logError(err.message());
@@ -178,7 +180,7 @@ namespace nap
     }
 
 
-    void SocketServer::createNewSocket()
+    void SocketServer::acceptNewSocket()
     {
         // create socket
         mWaitingSocket = std::make_unique<tcp::socket>(getIOService());
@@ -216,12 +218,12 @@ namespace nap
                 {
                     socket.send(asio::buffer(message), asio::socket_base::message_end_of_record, err);
 
-                    if (handleError(socket_id, err))
+                    if(err)
                         break;
                 }
 
-                // if we had a
-                if(err)
+                // bail on error
+                if (handleError(socket_id, err))
                     continue;
 
                 // get available bytes
@@ -278,5 +280,22 @@ namespace nap
                 pair.second.try_dequeue(message);
             }
         }
+    }
+
+
+    std::vector<std::string> SocketServer::getConnectedClientIDs() const
+    {
+        std::vector<std::string> clients;
+        for(const auto& pair : mSockets)
+        {
+            clients.emplace_back(pair.first);
+        }
+        return clients;
+    }
+
+
+    size_t SocketServer::getConnectedClientsCount() const
+    {
+        return mSockets.size();
     }
 }
