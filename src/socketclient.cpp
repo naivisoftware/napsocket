@@ -217,10 +217,13 @@ namespace nap
                     return;
 
                 // dispatch any received messages
-                if (bufs.size() > 0)
+                for(auto& buf : bufs)
                 {
-                    std::string received_message(asio::buffers_begin(bufs), asio::buffers_begin(bufs) + bufs.size());
-                    messageReceived.trigger(received_message);
+                    if(buf.size()>0)
+                    {
+                        std::string received_message(static_cast<char*>(buf.data()), buf.size());
+                        messageReceived.trigger(received_message);
+                    }
                 }
             }else
             {
