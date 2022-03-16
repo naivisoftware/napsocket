@@ -10,6 +10,7 @@
 RTTI_BEGIN_CLASS_NO_DEFAULT_CONSTRUCTOR(nap::SocketAdapter)
 	RTTI_PROPERTY("Thread", &nap::SocketAdapter::mThread, nap::rtti::EPropertyMetaData::Required)
     RTTI_PROPERTY("AllowFailure", &nap::SocketAdapter::mAllowFailure, nap::rtti::EPropertyMetaData::Default)
+    RTTI_PROPERTY("No Delay", &nap::SocketAdapter::mNoDelay, nap::rtti::EPropertyMetaData::Default)
 RTTI_END_CLASS
 
 namespace nap

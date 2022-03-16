@@ -105,33 +105,44 @@ namespace nap
         // the process of connecting is finished, whether it succeeded or not
         mConnecting.store(false);
 
+        bool error = errorCode.operator bool();
+        asio::error_code error_code = errorCode;
+
         // no error code
-        if(!errorCode)
+        if(!error)
         {
-            // socket is ready to be used
-            mSocketReady.store(true);
+            mSocket->set_option(tcp::no_delay(mNoDelay), error_code);
+            if (error_code)
+            {
+                error = true;
+            } else
+            {
+                // socket is ready to be used
+                mSocketReady.store(true);
 
-            logInfo("Socket connected");
+                logInfo("Socket connected");
 
-            // reconnect timer can be stopped
-            mReconnectTimer.stop();
+                // reconnect timer can be stopped
+                mReconnectTimer.stop();
 
-            // message queue can be cleared
-            clearQueue();
+                // message queue can be cleared
+                clearQueue();
 
-            // trigger connected signal
-            connected.trigger();
-        }else
+                // trigger connected signal
+                connected.trigger();
+            }
+        }
+
+        if(error)
         {
             // log error to console
-            logError(errorCode.message());
+            logError(error_code.message());
 
             // close socket
-            asio::error_code err;
-            mSocket->close(err);
-            if(err)
+            mSocket->close(error_code);
+            if(error_code)
             {
-                logError(err.message());
+                logError(error_code.message());
             }
 
             // if auto reconnect is enabled start the reconnection timer

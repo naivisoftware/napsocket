@@ -71,36 +71,47 @@ namespace nap
 
     void SocketServer::handleAccept(const asio::error_code& errorCode)
     {
-        if(!errorCode)
+        bool error = errorCode.operator bool();
+        asio::error_code error_code = errorCode;
+
+        if(!error)
         {
             // log status
             logInfo("Socket connected");
 
-            // read all available bytes, this is to make sure socket stream is empty before we start receiving new data
-            size_t available = mWaitingSocket->available();
-            asio::streambuf receivedStreamBuffer;
-            asio::streambuf::mutable_buffers_type bufs = receivedStreamBuffer.prepare(available);
-            asio::error_code err;
-            mWaitingSocket->receive(bufs, asio::socket_base::message_end_of_record, err);
-            if(err)
+            // set no delay
+            mWaitingSocket->set_option(tcp::no_delay(mNoDelay), error_code);
+            bool error = error_code.operator bool();
+            if(!error)
             {
-                logError(err.message());
+                // read all available bytes, this is to make sure socket stream is empty before we start receiving new data
+                size_t available = mWaitingSocket->available();
+                asio::streambuf receivedStreamBuffer;
+                asio::streambuf::mutable_buffers_type bufs = receivedStreamBuffer.prepare(available);
+                asio::error_code err;
+                mWaitingSocket->receive(bufs, asio::socket_base::message_end_of_record, err);
+                if (err)
+                {
+                    logError(err.message());
+                }
+
+                // create new message queue
+                std::string socket_id = math::generateUUID();
+                mMessageQueue.emplace(socket_id, moodycamel::ConcurrentQueue<std::string>());
+                mSockets.emplace(socket_id, std::move(mWaitingSocket));
+
+                // create new accepting socket
+                acceptNewSocket();
+
+                // dispatch signal
+                socketConnected.trigger(socket_id);
             }
+        }
 
-            // create new message queue
-            std::string socket_id = math::generateUUID();
-            mMessageQueue.emplace(socket_id, moodycamel::ConcurrentQueue<std::string>());
-            mSockets.emplace(socket_id, std::move(mWaitingSocket));
-
-            // create new accepting socket
-            acceptNewSocket();
-
-            // dispatch signal
-            socketConnected.trigger(socket_id);
-        }else
+        if(error)
         {
             // log error
-            logError(errorCode.message());
+            logError(error_code.message());
 
             // create new accepting socket
             acceptNewSocket();

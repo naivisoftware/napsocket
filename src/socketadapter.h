@@ -39,8 +39,9 @@ namespace nap
 		virtual void onDestroy() override;
     public:
         // Properties
-        bool mAllowFailure 					= false;		///< Property: 'AllowFailure' if binding to socket is allowed to fail on initialization
-	protected:
+        bool mAllowFailure 					= false; ///< Property: 'AllowFailure' if binding to socket is allowed to fail on initialization
+	    bool mNoDelay                       = true;   ///< Property: 'No Delay' disables Nagle algorithm
+    protected:
 		/**
 		 * called by a SocketThread
 		 */
