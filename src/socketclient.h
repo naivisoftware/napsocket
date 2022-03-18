@@ -96,7 +96,8 @@ namespace nap
         bool mEnableAutoReconnect           = true;         ///< Property: 'Reconnect On Disconnect' whether the client should try to reconnect after an error or dissconnect
         int  mAutoReconnectIntervalMillis   = 5000;         ///< Property: 'Reconnect Interval' the time interval at which the client should try to reconnect in milliseconds
         bool mEnableLog                     = false;        ///< Property: 'Enable Log' whether the client should log to the console
-	protected:
+	    int  mConnectTimeOutMillis          = 5000;
+    protected:
 		/**
 		 * The process function
 		 */
@@ -108,7 +109,7 @@ namespace nap
         /**
          * Message received signal, dispatched on thread assigned to this SocketAdapter
          */
-        Signal<const std::string&> messageReceived;
+        Signal<const std::string&> dataReceived;
 
         /**
          * Connected signal, dispatched on thread assigned to this SocketAdapter
@@ -159,6 +160,7 @@ namespace nap
         std::atomic_bool mSocketReady = { false };
         std::atomic_bool mConnecting = { false };
         SteadyTimer mReconnectTimer;
+        SteadyTimer mTimeoutTimer;
         moodycamel::ConcurrentQueue<std::function<void()>> mActionQueue;
 	};
 }

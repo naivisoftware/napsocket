@@ -57,6 +57,8 @@ namespace nap
 		 */
 		SocketThread(SocketService& service);
 
+        bool init(utility::ErrorState& errorState) override;
+
 		/**
 		 * Starts the UDPThread, spawns new thread if necessary or registers to UDPService
 		 * @param errorState contains any errors
@@ -73,7 +75,7 @@ namespace nap
 		ESocketThreadUpdateMethod mUpdateMethod = ESocketThreadUpdateMethod::MAIN_THREAD; ///< Property: 'Update Method' the way the SocketThread should process adapters
 
         // update interval
-        int mUpdateIntervalMS = 10;
+        int mUpdateIntervalMS = 1;
 
 		/**
 		 * Call this when update method is set to manual.

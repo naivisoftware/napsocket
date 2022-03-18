@@ -25,6 +25,7 @@ RTTI_BEGIN_CLASS(nap::SocketClient)
     RTTI_PROPERTY("Connect on init",            &nap::SocketClient::mConnectOnInit,                 nap::rtti::EPropertyMetaData::Default)
     RTTI_PROPERTY("Reconnect On Disconnect",    &nap::SocketClient::mEnableAutoReconnect,           nap::rtti::EPropertyMetaData::Default)
     RTTI_PROPERTY("Reconnect Interval",         &nap::SocketClient::mAutoReconnectIntervalMillis,   nap::rtti::EPropertyMetaData::Default)
+    RTTI_PROPERTY("Connect Timeout",            &nap::SocketClient::mConnectTimeOutMillis,          nap::rtti::EPropertyMetaData::Default)
     RTTI_PROPERTY("Enable Log",                 &nap::SocketClient::mEnableLog,                     nap::rtti::EPropertyMetaData::Default)
 RTTI_END_CLASS
 
@@ -69,6 +70,8 @@ namespace nap
         if(!mConnecting.load())
         {
             mConnecting.store(true);
+            mTimeoutTimer.reset();
+            mTimeoutTimer.start();
 
             logInfo("Connecting");
             mSocket->async_connect(*mRemoteEndpoint.get(), [this](const asio::error_code& errorCode){ handleConnect(errorCode); });
@@ -104,6 +107,9 @@ namespace nap
     {
         // the process of connecting is finished, whether it succeeded or not
         mConnecting.store(false);
+
+        // stop timeout timer
+        mTimeoutTimer.stop();
 
         bool error = errorCode.operator bool();
         asio::error_code error_code = errorCode;
@@ -193,6 +199,12 @@ namespace nap
 
 	void SocketClient::process()
 	{
+        std::function<void()> action;
+        while(mActionQueue.try_dequeue(action))
+        {
+            action();
+        }
+
         if (mSocketReady.load())
         {
             if(mSocket->is_open())
@@ -204,7 +216,7 @@ namespace nap
                 std::string message;
                 while (mQueue.try_dequeue(message))
                 {
-                    mSocket->send(asio::buffer(message), asio::socket_base::message_end_of_record, err);
+                    asio::write(*mSocket, asio::buffer(message), err);
 
                     // bail on error
                     if (handleError(err))
@@ -218,22 +230,29 @@ namespace nap
                 if (handleError(err))
                     return;
 
-                // receive incoming messages
-                asio::streambuf receivedStreamBuffer;
-                asio::streambuf::mutable_buffers_type bufs = receivedStreamBuffer.prepare(available);
-                mSocket->receive(bufs, asio::socket_base::message_end_of_record, err);
-
-                // bail on error
-                if (handleError(err))
-                    return;
-
-                // dispatch any received messages
-                for(auto& buf : bufs)
+                if(available>0)
                 {
-                    if(buf.size()>0)
+                    // receive incoming messages
+                    asio::streambuf receivedStreamBuffer;
+                    asio::streambuf::mutable_buffers_type bufs = receivedStreamBuffer.prepare(available);
+                    asio::read(*mSocket, bufs, err);
+
+                    // bail on error
+                    if (handleError(err))
+                        return;
+
+                    // dispatch any received messages
+                    std::string data;
+                    for(auto& buf : bufs)
                     {
-                        std::string received_message(static_cast<char*>(buf.data()), buf.size());
-                        messageReceived.trigger(received_message);
+                        if(buf.size()>0)
+                        {
+                            data += std::string(static_cast<char*>(buf.data()), buf.size());
+                        }
+                    }
+                    if(!data.empty())
+                    {
+                        dataReceived.trigger(data);
                     }
                 }
             }else
@@ -273,10 +292,33 @@ namespace nap
             }
         }
 
-        std::function<void()> action;
-        while(mActionQueue.try_dequeue(action))
+        if(mConnecting.load())
         {
-            action();
+            if(mTimeoutTimer.getMillis().count() > mConnectTimeOutMillis)
+            {
+                mConnecting.store(false);
+
+                asio::error_code error_code;
+                mTimeoutTimer.reset();
+                mTimeoutTimer.stop();
+
+                // log error to console
+                logError("Connect timeout occured!");
+
+                // close socket
+                mSocket->close(error_code);
+                if(error_code)
+                {
+                    logError(error_code.message());
+                }
+
+                // if auto reconnect is enabled start the reconnection timer
+                if(mEnableAutoReconnect)
+                {
+                    mReconnectTimer.reset();
+                    mReconnectTimer.start();
+                }
+            }
         }
 
         postProcessSignal.trigger();
@@ -327,7 +369,7 @@ namespace nap
     {
         mActionQueue.enqueue([this, &slot]()
         {
-            messageReceived.connect(slot);
+            dataReceived.connect(slot);
         });
     }
 
@@ -336,7 +378,7 @@ namespace nap
     {
         mActionQueue.enqueue([this, &slot]()
         {
-            messageReceived.disconnect(slot);
+            dataReceived.disconnect(slot);
         });
     }
 

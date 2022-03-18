@@ -37,8 +37,16 @@ namespace nap
 	}
 
 
+    bool SocketThread::init(utility::ErrorState &errorState)
+    {
+        return true;
+    }
+
+
 	bool SocketThread::start(utility::ErrorState& errorState)
 	{
+        mRun.store(true);
+
 		switch (mUpdateMethod)
 		{
 		case ESocketThreadUpdateMethod::SPAWN_OWN_THREAD:
@@ -54,8 +62,6 @@ namespace nap
 			errorState.fail("Unknown Socket thread update method");
 			return false;
 		}
-
-		mRun.store(true);
 
 		return true;
 	}
@@ -86,7 +92,8 @@ namespace nap
 	{
 		while (mRun.load())
 		{
-			process();
+            process();
+
             std::this_thread::sleep_for(std::chrono::milliseconds(mUpdateIntervalMS));
 		}
 	}
@@ -96,6 +103,9 @@ namespace nap
 	{
 		std::lock_guard lock(mMutex);
 
+        if(mIOService.stopped())
+            mIOService.restart();
+
         for(auto& adapter : mAdapters)
         {
             adapter->process();
@@ -103,6 +113,7 @@ namespace nap
 
         asio::error_code err;
         mIOService.poll(err);
+
         if(err)
         {
             nap::Logger::error(*this, err.message());
