@@ -73,7 +73,37 @@ namespace nap
          */
         bool isConnecting() const;
     public:
+        void addMessageReceivedSlot(Slot<const std::string&>& slot);
+
+        void removeMessageReceivedSlot(Slot<const std::string&>& slot);
+
+        void addConnectedSlot(Slot<>& slot);
+
+        void removeConnectedSlot(Slot<>& slot);
+
+        void addDisconnectedSlot(Slot<>& slot);
+
+        void removeDisconnectedSlot(Slot<>& slot);
+
+        void addPostProcessSlot(Slot<>& slot);
+
+        void removePostProcessSlot(Slot<>& slot);
+	public:
+		// properties
+		int mPort 							= 13251; 		///< Property: 'Port' the port the client socket binds to
+		std::string mRemoteIp 				= "10.8.0.3";	///< Property: 'Endpoint' the ip address the client socket binds to
+		bool mConnectOnInit                 = true;         ///< Property: 'Connect on init' whether the client should try to connect after successful initialization
+        bool mEnableAutoReconnect           = true;         ///< Property: 'Reconnect On Disconnect' whether the client should try to reconnect after an error or dissconnect
+        int  mAutoReconnectIntervalMillis   = 5000;         ///< Property: 'Reconnect Interval' the time interval at which the client should try to reconnect in milliseconds
+        bool mEnableLog                     = false;        ///< Property: 'Enable Log' whether the client should log to the console
+	protected:
+		/**
+		 * The process function
+		 */
+		void process() override;
+    private:
         // Signals
+        Signal<> postProcessSignal;
 
         /**
          * Message received signal, dispatched on thread assigned to this SocketAdapter
@@ -89,20 +119,7 @@ namespace nap
          * Disconnected signal, dispatched on thread assigned to this SocketAdapter
          */
         Signal<> disconnected;
-	public:
-		// properties
-		int mPort 							= 13251; 		///< Property: 'Port' the port the client socket binds to
-		std::string mRemoteIp 				= "10.8.0.3";	///< Property: 'Endpoint' the ip address the client socket binds to
-		bool mConnectOnInit                 = true;         ///< Property: 'Connect on init' whether the client should try to connect after successful initialization
-        bool mEnableAutoReconnect           = true;         ///< Property: 'Reconnect On Disconnect' whether the client should try to reconnect after an error or dissconnect
-        int  mAutoReconnectIntervalMillis   = 5000;         ///< Property: 'Reconnect Interval' the time interval at which the client should try to reconnect in milliseconds
-        bool mEnableLog                     = false;        ///< Property: 'Enable Log' whether the client should log to the console
-	protected:
-		/**
-		 * The process function
-		 */
-		void process() override;
-	private:
+
         /**
          * Handle connect callback
          * @param errorCode any potential errorcode
@@ -142,5 +159,6 @@ namespace nap
         std::atomic_bool mSocketReady = { false };
         std::atomic_bool mConnecting = { false };
         SteadyTimer mReconnectTimer;
+        moodycamel::ConcurrentQueue<std::function<void()>> mActionQueue;
 	};
 }

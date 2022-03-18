@@ -72,6 +72,9 @@ namespace nap
 		// properties
 		ESocketThreadUpdateMethod mUpdateMethod = ESocketThreadUpdateMethod::MAIN_THREAD; ///< Property: 'Update Method' the way the SocketThread should process adapters
 
+        // update interval
+        int mUpdateIntervalMS = 10;
+
 		/**
 		 * Call this when update method is set to manual.
 		 * If the update method is MAIN_THREAD or SPAWN_OWN_THREAD, this function will not do anything.

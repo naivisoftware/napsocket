@@ -272,6 +272,14 @@ namespace nap
                 }
             }
         }
+
+        std::function<void()> action;
+        while(mActionQueue.try_dequeue(action))
+        {
+            action();
+        }
+
+        postProcessSignal.trigger();
 	}
 
 
@@ -312,5 +320,76 @@ namespace nap
         {
             nap::Logger::info(*this, message);
         }
+    }
+
+
+    void SocketClient::addMessageReceivedSlot(Slot<const std::string&>& slot)
+    {
+        mActionQueue.enqueue([this, &slot]()
+        {
+            messageReceived.connect(slot);
+        });
+    }
+
+
+    void SocketClient::removeMessageReceivedSlot(Slot<const std::string&>& slot)
+    {
+        mActionQueue.enqueue([this, &slot]()
+        {
+            messageReceived.disconnect(slot);
+        });
+    }
+
+
+    void SocketClient::addConnectedSlot(Slot<>& slot)
+    {
+        mActionQueue.enqueue([this, &slot]()
+        {
+            connected.connect(slot);
+        });
+    }
+
+
+    void SocketClient::removeConnectedSlot(Slot<>& slot)
+    {
+        mActionQueue.enqueue([this, &slot]()
+        {
+            connected.disconnect(slot);
+        });
+    }
+
+    void SocketClient::addDisconnectedSlot(Slot<>& slot)
+    {
+        mActionQueue.enqueue([this, &slot]()
+        {
+            disconnected.connect(slot);
+        });
+    }
+
+
+    void SocketClient::removeDisconnectedSlot(Slot<>& slot)
+    {
+        mActionQueue.enqueue([this, &slot]()
+        {
+            disconnected.disconnect(slot);
+        });
+    }
+
+
+    void SocketClient::addPostProcessSlot(Slot<>& slot)
+    {
+        mActionQueue.enqueue([this, &slot]()
+        {
+            postProcessSignal.connect(slot);
+        });
+    }
+
+
+    void SocketClient::removePostProcessSlot(Slot<>& slot)
+    {
+        mActionQueue.enqueue([this, &slot]()
+        {
+            postProcessSignal.disconnect(slot);
+        });
     }
 }

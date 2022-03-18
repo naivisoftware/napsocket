@@ -19,6 +19,7 @@ RTTI_END_ENUM
 
 RTTI_BEGIN_CLASS_NO_DEFAULT_CONSTRUCTOR(nap::SocketThread)
 	RTTI_PROPERTY("Update Method", 	&nap::SocketThread::mUpdateMethod, nap::rtti::EPropertyMetaData::Default)
+    RTTI_PROPERTY("Update Interval Millis", &nap::SocketThread::mUpdateIntervalMS, nap::rtti::EPropertyMetaData::Default)
 RTTI_END_CLASS
 
 namespace nap
@@ -86,6 +87,7 @@ namespace nap
 		while (mRun.load())
 		{
 			process();
+            std::this_thread::sleep_for(std::chrono::milliseconds(mUpdateIntervalMS));
 		}
 	}
 
@@ -94,17 +96,17 @@ namespace nap
 	{
 		std::lock_guard lock(mMutex);
 
+        for(auto& adapter : mAdapters)
+        {
+            adapter->process();
+        }
+
         asio::error_code err;
         mIOService.poll(err);
         if(err)
         {
             nap::Logger::error(*this, err.message());
         }
-
-		for(auto& adapter : mAdapters)
-		{
-			adapter->process();
-		}
 	}
 
 
