@@ -79,6 +79,27 @@ namespace nap
     }
 
 
+    void SocketClient::disconnect()
+    {
+        asio::error_code err;
+        mSocket->shutdown(asio::socket_base::shutdown_both, err);
+        if (err)
+        {
+            logInfo(utility::stringFormat("error closing socket : %s", err.message().c_str()));
+        }
+
+        if(mConnecting.load())
+        {
+            mConnecting.store(false);
+        }
+
+        if(mSocketReady.load())
+        {
+            mSocketReady.store(false);
+        }
+    }
+
+
 	void SocketClient::onDestroy()
 	{
         SocketAdapter::onDestroy();

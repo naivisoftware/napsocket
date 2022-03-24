@@ -62,6 +62,11 @@ namespace nap
         void connect();
 
         /**
+         * Disconnect from server
+         */
+        void disconnect();
+
+        /**
          * Returns whether socket is connected
          * @return socket connected
          */
