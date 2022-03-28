@@ -14,6 +14,7 @@
 #include <asio/ts/internet.hpp>
 #include <asio/io_service.hpp>
 #include <asio/system_error.hpp>
+#include <asio/streambuf.hpp>
 
 // NAP includes
 #include <utility/threading.h>
@@ -102,6 +103,8 @@ namespace nap
         int  mAutoReconnectIntervalMillis   = 5000;         ///< Property: 'Reconnect Interval' the time interval at which the client should try to reconnect in milliseconds
         bool mEnableLog                     = false;        ///< Property: 'Enable Log' whether the client should log to the console
 	    int  mConnectTimeOutMillis          = 5000;
+        int  mReadTimeOutMillis             = 200;
+        int  mWriteTimeOutMillis            = 200;
     protected:
 		/**
 		 * The process function
@@ -164,9 +167,21 @@ namespace nap
 		moodycamel::ConcurrentQueue<std::string> 	mQueue;
         std::atomic_bool mSocketReady = { false };
         std::atomic_bool mConnecting = { false };
+
+        // Timers
         SteadyTimer mReconnectTimer;
         SteadyTimer mTimeoutTimer;
-        SteadyTimer mResponseTimer;
+        SteadyTimer mWriteResponseTimer;
+        SteadyTimer mReadResponseTimer;
+
+        //
+        bool mWritingData = false;
+        bool mReceivingData = false;
+
+        //
+        asio::streambuf     mStreamBuffer;
+        std::string         mWriteBuffer;
+
         moodycamel::ConcurrentQueue<std::function<void()>> mActionQueue;
 	};
 }

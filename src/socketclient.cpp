@@ -10,7 +10,6 @@
 #include <asio/ts/internet.hpp>
 #include <asio/io_service.hpp>
 #include <asio/system_error.hpp>
-#include <asio/streambuf.hpp>
 #include <nap/logger.h>
 
 #include <thread>
@@ -27,6 +26,8 @@ RTTI_BEGIN_CLASS(nap::SocketClient)
     RTTI_PROPERTY("Reconnect Interval",         &nap::SocketClient::mAutoReconnectIntervalMillis,   nap::rtti::EPropertyMetaData::Default)
     RTTI_PROPERTY("Connect Timeout",            &nap::SocketClient::mConnectTimeOutMillis,          nap::rtti::EPropertyMetaData::Default)
     RTTI_PROPERTY("Enable Log",                 &nap::SocketClient::mEnableLog,                     nap::rtti::EPropertyMetaData::Default)
+    RTTI_PROPERTY("Write Timeout",              &nap::SocketClient::mWriteTimeOutMillis,            nap::rtti::EPropertyMetaData::Default)
+    RTTI_PROPERTY("Read Timeout",               &nap::SocketClient::mReadTimeOutMillis,             nap::rtti::EPropertyMetaData::Default)
 RTTI_END_CLASS
 
 namespace nap
@@ -239,46 +240,144 @@ namespace nap
 
                 // let the socket send queued messages
                 std::string message;
-                while (mQueue.try_dequeue(message))
+                if(!mWritingData)
                 {
-                    asio::async_write(*mSocket,
-                                      asio::buffer(message),
-                                      [this](const asio::error_code& errorCode, std::size_t bytes_transferred)
+                    if (mQueue.try_dequeue(message))
                     {
-                        handleError(errorCode);
-                    });
-                }
+                        mWritingData = true;
+                        mWriteResponseTimer.reset();
+                        mWriteResponseTimer.start();
 
-                // get available bytes to read
-                size_t available = mSocket->available(err);
-
-                // bail on error
-                if (handleError(err))
-                    return;
-
-                if(available>0)
-                {
-                    // receive incoming messages
-                    asio::streambuf receivedStreamBuffer;
-                    asio::streambuf::mutable_buffers_type bufs = receivedStreamBuffer.prepare(available);
-
-                    asio::async_read(*mSocket, bufs, [this](const asio::error_code& errorCode, std::size_t bytes_transferred)
-                    {
-                        handleError(errorCode);
-                    });
-
-                    // dispatch any received messages
-                    std::string data;
-                    for(auto& buf : bufs)
-                    {
-                        if(buf.size()>0)
+                        mWriteBuffer = message;
+                        asio::async_write(*mSocket,
+                                          asio::buffer(mWriteBuffer),
+                                          asio::transfer_exactly(mWriteBuffer.size()),
+                                          [this](const asio::error_code& errorCode, std::size_t bytes_transferred)
                         {
-                            data += std::string(static_cast<char*>(buf.data()), buf.size());
+                            // not writing data anymore
+                            mWritingData = false;
+
+                            // handle error
+                            handleError(errorCode);
+
+                            // stop response timer
+                            mWriteResponseTimer.stop();
+                        });
+                    }
+                }else
+                {
+                    if(mWriteResponseTimer.getMillis().count() > mWriteTimeOutMillis)
+                    {
+                        // stop response timer
+                        mWriteResponseTimer.stop();
+
+                        // not writing data
+                        mWritingData = false;
+
+                        // socket is not ready
+                        mSocketReady.store(false);
+
+                        // timeout occured
+                        // log error to console
+                        logError("Write timeout occured!");
+
+                        // close socket
+                        asio::error_code error_code;
+                        mSocket->close(error_code);
+                        if(error_code)
+                        {
+                            logError(error_code.message());
+                        }
+
+                        // if auto reconnect is enabled start the reconnection timer
+                        if(mEnableAutoReconnect)
+                        {
+                            mReconnectTimer.reset();
+                            mReconnectTimer.start();
                         }
                     }
-                    if(!data.empty())
+                }
+
+                if(!mReceivingData)
+                {
+                    // get available bytes to read
+                    size_t available = mSocket->available(err);
+
+                    // bail on error
+                    if (handleError(err))
+                        return;
+
+                    if(available>0)
                     {
-                        dataReceived.trigger(data);
+                        mReceivingData = true;
+                        mReadResponseTimer.reset();
+                        mReadResponseTimer.start();
+
+                        // receive incoming messages
+                        asio::async_read(*mSocket,
+                                         mStreamBuffer,
+                                         asio::transfer_exactly(available),
+                                         [this](const asio::error_code& errorCode, std::size_t bytes_transferred)
+                        {
+                            // not receiving any data
+                            mReceivingData = false;
+
+                            // stop timer
+                            mReadResponseTimer.stop();
+
+                            // Read the data received
+                            auto data = mStreamBuffer.data();
+
+                            // Consume it after
+                            mStreamBuffer.consume(bytes_transferred);
+
+                            if(!handleError(errorCode))
+                            {
+                                // dispatch any received messages
+                                std::string data_string;
+                                if(bytes_transferred>0)
+                                {
+                                    data_string += std::string(asio::buffers_begin(data), asio::buffers_end(data));
+
+                                    if(!data_string.empty())
+                                    {
+                                        dataReceived.trigger(data_string);
+                                    }
+                                }
+                            }
+                        });
+                    }
+                }else
+                {
+                    if(mReadResponseTimer.getMillis().count() > mReadTimeOutMillis)
+                    {
+                        // stop read response timer
+                        mReadResponseTimer.stop();
+
+                        // stop sending data
+                        mReceivingData = false;
+
+                        // socket is not ready
+                        mSocketReady.store(false);
+
+                        // timeout occured
+                        // log error to console
+                        logError("Read timeout occured!");
+
+                        // close socket
+                        asio::error_code error_code;
+                        mSocket->close(error_code);
+                        if(error_code)
+                        {
+                            logError(error_code.message());
+                        }
+
+                        // if auto reconnect is enabled start the reconnection timer
+                        if(mEnableAutoReconnect)
+                        {
+                            mReconnectTimer.reset();
+                            mReconnectTimer.start();
+                        }
                     }
                 }
             }else
