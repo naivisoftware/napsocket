@@ -10,6 +10,7 @@
 
 using asio::ip::address;
 using asio::ip::tcp;
+using namespace std::chrono_literals;
 
 RTTI_BEGIN_ENUM(nap::ESocketThreadUpdateMethod)
 	RTTI_ENUM_VALUE(nap::ESocketThreadUpdateMethod::MAIN_THREAD, 		"Main Thread"),
@@ -19,7 +20,6 @@ RTTI_END_ENUM
 
 RTTI_BEGIN_CLASS_NO_DEFAULT_CONSTRUCTOR(nap::SocketThread)
 	RTTI_PROPERTY("Update Method", 	&nap::SocketThread::mUpdateMethod, nap::rtti::EPropertyMetaData::Default)
-    RTTI_PROPERTY("Update Interval Millis", &nap::SocketThread::mUpdateIntervalMS, nap::rtti::EPropertyMetaData::Default)
 RTTI_END_CLASS
 
 namespace nap
@@ -50,7 +50,11 @@ namespace nap
 		switch (mUpdateMethod)
 		{
 		case ESocketThreadUpdateMethod::SPAWN_OWN_THREAD:
-			mThread = std::thread([this] { thread(); });
+            mThread = std::thread([this]
+                    {
+                        std::this_thread::sleep_for(2000ms);
+                        thread();
+                    });
 			break;
 		case ESocketThreadUpdateMethod::MAIN_THREAD:
 			mService.registerSocketThread(this);
@@ -90,12 +94,10 @@ namespace nap
 
 	void SocketThread::thread()
 	{
-		while (mRun.load())
-		{
+        while (mRun.load())
+        {
             process();
-
-            std::this_thread::sleep_for(std::chrono::milliseconds(mUpdateIntervalMS));
-		}
+        }
 	}
 
 

@@ -138,7 +138,11 @@ namespace nap
         // no error code
         if(!error)
         {
+            // set socket options
+
+            // no delay
             mSocket->set_option(tcp::no_delay(mNoDelay), error_code);
+
             if (error_code)
             {
                 error = true;
@@ -185,7 +189,7 @@ namespace nap
     bool SocketClient::handleError(const asio::error_code& errorCode)
     {
         // check if some error occurred, if so, close socket and start reconnecting if required
-        if(errorCode)
+        if(errorCode && mSocketReady.load())
         {
             // socket is not ready
             mSocketReady.store(false);
@@ -237,11 +241,12 @@ namespace nap
                 std::string message;
                 while (mQueue.try_dequeue(message))
                 {
-                    asio::write(*mSocket, asio::buffer(message), err);
-
-                    // bail on error
-                    if (handleError(err))
-                        return;
+                    asio::async_write(*mSocket,
+                                      asio::buffer(message),
+                                      [this](const asio::error_code& errorCode, std::size_t bytes_transferred)
+                    {
+                        handleError(errorCode);
+                    });
                 }
 
                 // get available bytes to read
@@ -256,11 +261,11 @@ namespace nap
                     // receive incoming messages
                     asio::streambuf receivedStreamBuffer;
                     asio::streambuf::mutable_buffers_type bufs = receivedStreamBuffer.prepare(available);
-                    asio::read(*mSocket, bufs, err);
 
-                    // bail on error
-                    if (handleError(err))
-                        return;
+                    asio::async_read(*mSocket, bufs, [this](const asio::error_code& errorCode, std::size_t bytes_transferred)
+                    {
+                        handleError(errorCode);
+                    });
 
                     // dispatch any received messages
                     std::string data;

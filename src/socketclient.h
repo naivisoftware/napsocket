@@ -166,6 +166,7 @@ namespace nap
         std::atomic_bool mConnecting = { false };
         SteadyTimer mReconnectTimer;
         SteadyTimer mTimeoutTimer;
+        SteadyTimer mResponseTimer;
         moodycamel::ConcurrentQueue<std::function<void()>> mActionQueue;
 	};
 }
