@@ -67,37 +67,45 @@ namespace nap
 
     void SocketClient::connect()
     {
-        // try to open socket
-        if(!mConnecting.load())
+        mActionQueue.enqueue([this]()
         {
-            mConnecting.store(true);
-            mTimeoutTimer.reset();
-            mTimeoutTimer.start();
+            // try to open socket
+            if (!mConnecting.load()) {
+                mConnecting.store(true);
+                mTimeoutTimer.reset();
+                mTimeoutTimer.start();
 
-            logInfo("Connecting");
-            mSocket->async_connect(*mRemoteEndpoint.get(), [this](const asio::error_code& errorCode){ handleConnect(errorCode); });
-        }
+                logInfo("Connecting");
+                mSocket->async_connect(*mRemoteEndpoint.get(),
+                                       [this](const asio::error_code &errorCode) { handleConnect(errorCode); });
+            }
+        });
     }
 
 
     void SocketClient::disconnect()
     {
-        asio::error_code err;
-        mSocket->shutdown(asio::socket_base::shutdown_both, err);
-        if (err)
+        mActionQueue.enqueue([this]()
         {
-            logInfo(utility::stringFormat("error closing socket : %s", err.message().c_str()));
-        }
+            asio::error_code err;
+            mSocket->shutdown(asio::socket_base::shutdown_both, err);
+            if (err)
+            {
+                logInfo(utility::stringFormat("error closing socket : %s", err.message().c_str()));
+            }
 
-        if(mConnecting.load())
-        {
-            mConnecting.store(false);
-        }
+            if(mConnecting.load())
+            {
+                mConnecting.store(false);
+            }
 
-        if(mSocketReady.load())
-        {
-            mSocketReady.store(false);
-        }
+            if(mSocketReady.load())
+            {
+                mSocketReady.store(false);
+            }
+
+            disconnected.trigger();
+        });
     }
 
 
