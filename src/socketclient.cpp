@@ -94,6 +94,12 @@ namespace nap
                 logInfo(utility::stringFormat("error closing socket : %s", err.message().c_str()));
             }
 
+            mSocket->close(err);
+            if (err)
+            {
+                logInfo(utility::stringFormat("error closing socket : %s", err.message().c_str()));
+            }
+
             if(mConnecting.load())
             {
                 mConnecting.store(false);
@@ -495,6 +501,15 @@ namespace nap
         {
             nap::Logger::info(*this, message);
         }
+    }
+
+
+    void SocketClient::enableLog(bool enableLog)
+    {
+        mActionQueue.enqueue([this, enableLog]()
+        {
+            mEnableLog = enableLog;
+        });
     }
 
 

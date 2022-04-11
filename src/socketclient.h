@@ -78,6 +78,8 @@ namespace nap
          * @return socket is connecting
          */
         bool isConnecting() const;
+
+        void enableLog(bool enableLog);
     public:
         void addMessageReceivedSlot(Slot<const std::string&>& slot);
 
