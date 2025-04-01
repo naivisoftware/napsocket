@@ -25,22 +25,27 @@ RTTI_END_CLASS
 namespace nap
 {
 	//////////////////////////////////////////////////////////////////////////
+	// UDPThread::Impl
+	//////////////////////////////////////////////////////////////////////////
+
+	struct SocketThread::Impl
+	{
+		asio::io_context mIOContext;
+	};
+
+
+	//////////////////////////////////////////////////////////////////////////
 	// SocketThread
 	//////////////////////////////////////////////////////////////////////////
 
     SocketThread::SocketThread(SocketService & service) : mService(service)
 	{
+		mImpl = std::make_unique<Impl>();
 		mManualProcessFunc = [this]()
 		{
 			nap::Logger::warn(*this, "calling manual process function when thread update method is not manual!");
 		};
 	}
-
-
-    bool SocketThread::init(utility::ErrorState &errorState)
-    {
-        return true;
-    }
 
 
 	bool SocketThread::start(utility::ErrorState& errorState)
@@ -50,11 +55,7 @@ namespace nap
 		switch (mUpdateMethod)
 		{
 		case ESocketThreadUpdateMethod::SPAWN_OWN_THREAD:
-            mThread = std::thread([this]
-                    {
-                        std::this_thread::sleep_for(2000ms);
-                        thread();
-                    });
+			mThread = std::thread([this] { thread(); });
 			break;
 		case ESocketThreadUpdateMethod::MAIN_THREAD:
 			mService.registerSocketThread(this);
@@ -105,8 +106,8 @@ namespace nap
 	{
 		std::lock_guard lock(mMutex);
 
-        if(mIOService.stopped())
-            mIOService.restart();
+        if(mImpl->mIOContext.stopped())
+			mImpl->mIOContext.restart();
 
         for(auto& adapter : mAdapters)
         {
@@ -114,7 +115,7 @@ namespace nap
         }
 
         asio::error_code err;
-        mIOService.poll(err);
+		mImpl->mIOContext.poll(err);
 
         if(err)
         {
@@ -147,5 +148,11 @@ namespace nap
 		std::lock_guard lock(mMutex);
 
 		mAdapters.emplace_back(adapter);
+	}
+
+
+	asio::io_service& SocketThread::getIOContext()
+	{
+		return mImpl->mIOContext;
 	}
 }

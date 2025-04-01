@@ -1,33 +1,24 @@
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
-
 #pragma once
 
 // External includes
-#include <nap/device.h>
 #include <thread>
 #include <mutex>
+#include <concurrentqueue.h>
 
 // NAP includes
+#include <nap/device.h>
 #include <nap/numeric.h>
-#include <concurrentqueue.h>
 #include <nap/signalslot.h>
-
-// ASIO includes
-#include <asio/ts/buffer.hpp>
-#include <asio/ts/internet.hpp>
-#include <asio/io_service.hpp>
-#include <asio/system_error.hpp>
-#include <asio/ts/internet.hpp>
 
 // Local includes
 #include "socketadapter.h"
+#include "socketpacket.h"
 
 namespace nap
 {
-    //////////////////////////////////////////////////////////////////////////
-
     /**
      * SocketServer creates a new socket and waits for any incoming connections.
      * You can connect as many clients as you want to the server.
@@ -37,13 +28,6 @@ namespace nap
     {
         RTTI_ENABLE(SocketAdapter)
     public:
-        /**
-         * initialization
-         * @param error contains error information
-         * @return true on succes
-         */
-        virtual bool init(utility::ErrorState& errorState) override;
-
         /**
          * Called before deconstruction
          */
@@ -73,18 +57,19 @@ namespace nap
          * @return amount of connected clients
          */
         size_t getConnectedClientsCount() const;
+
     public:
         // properties
         int mPort 						= 13251;		///< Property: 'Port' the port the server socket binds to
         std::string mIPAddress			= "";	        ///< Property: 'IP Address' local ip address to bind to, if left empty will bind to any local address
         bool mEnableLog                 = false;        ///< Property: 'Enable Log' whether the server should log to the console
+
     public:
-        // Signals
         /**
          * Packet received signal will be dispatched on the thread this SocketAdapter is registered to, see SocketThread
          * First argument is id, second is received message
          */
-        Signal<const std::string&, const std::string&> messageReceived;
+        Signal<const std::string&, const SocketPacket&> packetReceived;
 
         /**
          * Socket connected signal, will be dispatched on the thread this SocketAdapter is registered to, see SocketThread
@@ -97,11 +82,25 @@ namespace nap
          * Argument is id of socket disconnected
          */
         Signal<const std::string&> socketDisconnected;
+
     protected:
-        /**
-         * The process function
-         */
-        void process() override;
+		/**
+		 * Called when server socket needs to be created
+		 * @param errorState The error state
+		 * @return: true on success
+		 */
+		virtual bool onStart(utility::ErrorState& errorState) override final;
+
+		/**
+		 * Called when socket needs to be closed
+		 */
+		virtual void onStop() override final;
+
+		/**
+		 * The process function
+		 */
+		void onProcess() override final;
+
     private:
         /**
          * Called when a new socket is connected
@@ -139,14 +138,13 @@ namespace nap
          */
         void acceptNewSocket();
 
-        // ASIO
-        std::unique_ptr<asio::ip::tcp::socket>                                  mWaitingSocket;
-        std::unordered_map<std::string, std::unique_ptr<asio::ip::tcp::socket>> mSockets;
-        std::unique_ptr<asio::ip::tcp::endpoint> 	                            mRemoteEndpoint;
-        std::unique_ptr<asio::ip::tcp::acceptor>                                mAcceptor;
+		// Server specific ASIO implementation
+		class Impl;
+		std::unique_ptr<Impl> mImpl;
 
         // Threading
-        std::unordered_map<std::string, moodycamel::ConcurrentQueue<std::string>> 	mMessageQueue;
-        std::vector<std::string>                    mSocketsToRemove;
-    };
+        std::unordered_map<std::string, moodycamel::ConcurrentQueue<SocketPacket>> 	mMessageQueue;
+        std::vector<std::string> mSocketsToRemove;
+		std::mutex mMutex;
+	};
 }
