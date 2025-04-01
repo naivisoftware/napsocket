@@ -16,9 +16,9 @@
 #include <mathutils.h>
 
 RTTI_BEGIN_CLASS(nap::SocketServer)
-        RTTI_PROPERTY("Port",			&nap::SocketServer::mPort,			nap::rtti::EPropertyMetaData::Default)
-        RTTI_PROPERTY("IP Address",		&nap::SocketServer::mIPAddress,	    nap::rtti::EPropertyMetaData::Default)
-        RTTI_PROPERTY("Enable Log",		&nap::SocketServer::mEnableLog,	    nap::rtti::EPropertyMetaData::Default)
+	RTTI_PROPERTY("Port",			&nap::SocketServer::mPort,			nap::rtti::EPropertyMetaData::Default)
+	RTTI_PROPERTY("IP Address",		&nap::SocketServer::mIPAddress,	    nap::rtti::EPropertyMetaData::Default)
+	RTTI_PROPERTY("Enable Log",		&nap::SocketServer::mEnableLog,	    nap::rtti::EPropertyMetaData::Default)
 RTTI_END_CLASS
 
 namespace nap
@@ -32,16 +32,14 @@ namespace nap
 	public:
 		Impl(asio::io_context& context) : mIOContext(context){}
 
-		// ASIO
 		asio::io_context& 			mIOContext;
 		asio::ip::tcp::endpoint 	mRemoteEndpoint;
 
-		asio::ip::tcp::socket		mWaitingSocket{ mIOContext };
 		asio::ip::tcp::acceptor		mAcceptor{ mIOContext };
-
-		asio::ip::udp::socket       mSocket{ mIOContext };
+		asio::ip::tcp::socket		mWaitingSocket{ mIOContext };
 		std::unordered_map<std::string, asio::ip::tcp::socket> mSockets;
 	};
+
 
     //////////////////////////////////////////////////////////////////////////
     // SocketServer
@@ -261,8 +259,8 @@ namespace nap
                     continue;
 
                 // receive incoming messages
-                asio::streambuf receivedStreamBuffer;
-                asio::streambuf::mutable_buffers_type bufs = receivedStreamBuffer.prepare(available);
+                asio::streambuf rec_stream_buf;
+                asio::streambuf::mutable_buffers_type bufs = rec_stream_buf.prepare(available);
                 socket.receive(bufs, asio::socket_base::message_end_of_record, err);
 
                 // bail on error
