@@ -38,7 +38,7 @@ namespace nap
 		 * Send message to all connected sockets
 		 * @param message the message
 		 */
-		void sendToAll(const SocketPacket&& message);
+		void sendToAll(SocketPacket&& message);
 
         /**
          * Send message to specific socket
@@ -52,7 +52,7 @@ namespace nap
 		 * @param id client id
 		 * @param message the message
 		 */
-		void send(const std::string& id, const SocketPacket&& message);
+		void send(const std::string& id, SocketPacket&& message);
 
 		/**
          * Returns vector with all id's of connected clients

@@ -160,7 +160,7 @@ namespace nap
     }
 
 
-	void SocketServer::sendToAll(const SocketPacket&& message)
+	void SocketServer::sendToAll(SocketPacket&& message)
 	{
 		for(auto& pair : mMessageQueueMap)
 			pair.second.enqueue(std::move(message));
@@ -179,7 +179,7 @@ namespace nap
 	}
 
 
-	void SocketServer::send(const std::string &id, const SocketPacket&& message)
+	void SocketServer::send(const std::string &id, SocketPacket&& message)
 	{
 		auto it = mMessageQueueMap.find(id);
 		if(it == mMessageQueueMap.end())
