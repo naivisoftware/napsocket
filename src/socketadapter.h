@@ -25,7 +25,7 @@ namespace nap
 	{
 		friend class SocketThread;
 
-		RTTI_ENABLE(Resource)
+		RTTI_ENABLE(Device)
 	public:
 		/**
 		 * Initialization

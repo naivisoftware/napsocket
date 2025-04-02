@@ -30,6 +30,9 @@ namespace nap
 
 	bool SocketAdapter::start(utility::ErrorState& errorState)
 	{
+		if(!onStart(errorState))
+			return false;
+
 		mThread->registerAdapter(this);
 		return true;
 	}

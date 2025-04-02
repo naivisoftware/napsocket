@@ -3,7 +3,6 @@
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
 #include "socketclient.h"
-#include "socketthread.h"
 
 // External includes
 #include <asio/ts/buffer.hpp>
@@ -14,10 +13,6 @@
 #include <nap/logger.h>
 
 #include <thread>
-
-using asio::ip::address;
-using asio::ip::tcp;
-using asio::buffers_begin;
 
 RTTI_BEGIN_CLASS(nap::SocketClient)
 	RTTI_PROPERTY("Endpoint",					&nap::SocketClient::mRemoteIp,						nap::rtti::EPropertyMetaData::Default)
@@ -76,12 +71,12 @@ namespace nap
 			return init_success;
 
 		asio::ip::tcp::endpoint endpoint = iter->endpoint();
-		auto address = address::from_string(endpoint.address().to_string(), asio_error_code);
+		auto address = asio::ip::address::from_string(endpoint.address().to_string(), asio_error_code);
         if(handleAsioError(asio_error_code, errorState, init_success))
             return init_success;
 
         // create endpoint
-        mImpl->mRemoteEndpoint = tcp::endpoint(address, mPort);
+        mImpl->mRemoteEndpoint = asio::ip::tcp::endpoint(address, mPort);
 
         // connect now if we need to
         if(mConnectOnInit)
@@ -181,7 +176,7 @@ namespace nap
             // set socket options
 
             // no delay
-			mImpl->mSocket.set_option(tcp::no_delay(mNoDelay), error_code);
+			mImpl->mSocket.set_option(asio::ip::tcp::no_delay(mNoDelay), error_code);
 
             if (error_code)
             {
