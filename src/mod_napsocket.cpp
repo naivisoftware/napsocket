@@ -4,4 +4,4 @@
 
 #include "utility/module.h"
 
-NAP_SERVICE_MODULE("mod_napsocket", "0.1.0", "nap::SocketService")
+NAP_SERVICE_MODULE("napsocket", "0.1.0", "nap::SocketService")

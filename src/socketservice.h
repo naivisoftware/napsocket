@@ -65,6 +65,7 @@ namespace nap
 		 * @param thread the thread do remove
 		 */
 		void removeSocketThread(SocketThread* thread);
+
 	private:
 		// registered udp threads
 		std::vector<SocketThread*> mThreads;

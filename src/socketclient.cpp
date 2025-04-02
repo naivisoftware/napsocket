@@ -3,20 +3,16 @@
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
 #include "socketclient.h"
-#include "socketthread.h"
 
 // External includes
 #include <asio/ts/buffer.hpp>
 #include <asio/ts/internet.hpp>
 #include <asio/io_service.hpp>
 #include <asio/system_error.hpp>
+#include <asio/streambuf.hpp>
 #include <nap/logger.h>
 
 #include <thread>
-
-using asio::ip::address;
-using asio::ip::tcp;
-using asio::buffers_begin;
 
 RTTI_BEGIN_CLASS(nap::SocketClient)
 	RTTI_PROPERTY("Endpoint",					&nap::SocketClient::mRemoteIp,						nap::rtti::EPropertyMetaData::Default)
@@ -33,29 +29,54 @@ RTTI_END_CLASS
 namespace nap
 {
 	//////////////////////////////////////////////////////////////////////////
+	// SocketClientASIO
+	//////////////////////////////////////////////////////////////////////////
+
+	class SocketClient::Impl
+	{
+	public:
+		Impl(asio::io_context& context) : mIOContext(context){}
+
+		// ASIO
+		asio::io_context& 			mIOContext;
+		asio::ip::tcp::endpoint 	mRemoteEndpoint;
+		asio::ip::tcp::socket       mSocket{ mIOContext };
+		asio::streambuf     		mStreamBuffer;
+	};
+
+
+	//////////////////////////////////////////////////////////////////////////
 	// SocketClient
 	//////////////////////////////////////////////////////////////////////////
 
-	bool SocketClient::init(utility::ErrorState& errorState)
+	bool SocketClient::onStart(utility::ErrorState& errorState)
 	{
-        // when asio error occurs, init_success indicates whether initialization should fail or succeed
+		// create asio implementation
+		mImpl = std::make_unique<SocketClient::Impl>(getIOContext());
+
+		// when asio error occurs, init_success indicates whether initialization should fail or succeed
         bool init_success = false;
         asio::error_code asio_error_code;
 
-        // create address from string
-        auto address = address::from_string(mRemoteIp, asio_error_code);
+		// try to open socket
+		mImpl->mSocket.open(asio::ip::tcp::v4(), asio_error_code);
+		if(handleAsioError(asio_error_code, errorState, init_success))
+			return init_success;
+
+		// resolve ip address from endpoint
+		asio::ip::tcp::resolver resolver(getIOContext());
+		asio::ip::tcp::resolver::query query(mRemoteIp, "80");
+		asio::ip::tcp::resolver::iterator iter = resolver.resolve(query, asio_error_code);
+		if(handleAsioError(asio_error_code, errorState, init_success))
+			return init_success;
+
+		asio::ip::tcp::endpoint endpoint = iter->endpoint();
+		auto address = asio::ip::address::from_string(endpoint.address().to_string(), asio_error_code);
         if(handleAsioError(asio_error_code, errorState, init_success))
             return init_success;
 
         // create endpoint
-        mRemoteEndpoint = std::make_unique<tcp::endpoint>(address, mPort);
-
-        // create socket
-        mSocket = std::make_unique<tcp::socket>(getIOService());
-
-		// init SocketAdapter, registering the client to an SocketThread
-		if (!SocketAdapter::init(errorState))
-			return false;
+        mImpl->mRemoteEndpoint = asio::ip::tcp::endpoint(address, mPort);
 
         // connect now if we need to
         if(mConnectOnInit)
@@ -70,14 +91,15 @@ namespace nap
         mActionQueue.enqueue([this]()
         {
             // try to open socket
-            if (!mConnecting.load()) {
+            if (!mConnecting.load())
+			{
                 mConnecting.store(true);
                 mTimeoutTimer.reset();
                 mTimeoutTimer.start();
 
-                logInfo("Connecting");
-                mSocket->async_connect(*mRemoteEndpoint.get(),
-                                       [this](const asio::error_code &errorCode) { handleConnect(errorCode); });
+                logInfo("Connecting...");
+                mImpl->mSocket.async_connect(mImpl->mRemoteEndpoint,
+					[this](const asio::error_code &errorCode) { handleConnect(errorCode); });
             }
         });
     }
@@ -88,13 +110,13 @@ namespace nap
         mActionQueue.enqueue([this]()
         {
             asio::error_code err;
-            mSocket->shutdown(asio::socket_base::shutdown_both, err);
+            mImpl->mSocket.shutdown(asio::socket_base::shutdown_both, err);
             if (err)
             {
                 logInfo(utility::stringFormat("error closing socket : %s", err.message().c_str()));
             }
 
-            mSocket->close(err);
+			mImpl->mSocket.close(err);
             if (err)
             {
                 logInfo(utility::stringFormat("error closing socket : %s", err.message().c_str()));
@@ -115,13 +137,11 @@ namespace nap
     }
 
 
-	void SocketClient::onDestroy()
+	void SocketClient::onStop()
 	{
-        SocketAdapter::onDestroy();
-
         mSocketReady.store(false);
 		asio::error_code err;
-		mSocket->shutdown(asio::socket_base::shutdown_both, err);
+		mImpl->mSocket.shutdown(asio::socket_base::shutdown_both, err);
 		if (err)
 		{
             logInfo(utility::stringFormat("error closing socket : %s", err.message().c_str()));
@@ -129,7 +149,7 @@ namespace nap
 	}
 
 
-	void SocketClient::send(const std::string& message)
+	void SocketClient::send(const SocketPacket& message)
 	{
         // only queue messages if socket is ready
         if(mSocketReady.load())
@@ -145,22 +165,22 @@ namespace nap
         mConnecting.store(false);
 
         // stop timeout timer
-        mTimeoutTimer.stop();
+        mTimeoutTimer.reset(); //stop();
 
-        bool error = errorCode.operator bool();
+        bool is_error = errorCode.operator bool();
         asio::error_code error_code = errorCode;
 
-        // no error code
-        if(!error)
+        // no is_error code
+        if(!is_error)
         {
             // set socket options
 
             // no delay
-            mSocket->set_option(tcp::no_delay(mNoDelay), error_code);
+			mImpl->mSocket.set_option(asio::ip::tcp::no_delay(mNoDelay), error_code);
 
             if (error_code)
             {
-                error = true;
+				is_error = true;
             } else
             {
                 // socket is ready to be used
@@ -169,7 +189,7 @@ namespace nap
                 logInfo("Socket connected");
 
                 // reconnect timer can be stopped
-                mReconnectTimer.stop();
+                mReconnectTimer.reset(); //stop();
 
                 // message queue can be cleared
                 clearQueue();
@@ -179,13 +199,13 @@ namespace nap
             }
         }
 
-        if(error)
+        if(is_error)
         {
-            // log error to console
+            // log is_error to console
             logError(error_code.message());
 
             // close socket
-            mSocket->close(error_code);
+			mImpl->mSocket.close(error_code);
             if(error_code)
             {
                 logError(error_code.message());
@@ -215,7 +235,7 @@ namespace nap
 
             // shutdown active socket
             asio::error_code err;
-            mSocket->shutdown(asio::socket_base::shutdown_both, err);
+			mImpl->mSocket.shutdown(asio::socket_base::shutdown_both, err);
             if (err)
             {
                 logError(err.message());
@@ -237,7 +257,7 @@ namespace nap
     }
 
 
-	void SocketClient::process()
+	void SocketClient::onProcess()
 	{
         std::function<void()> action;
         while(mActionQueue.try_dequeue(action))
@@ -247,24 +267,24 @@ namespace nap
 
         if (mSocketReady.load())
         {
-            if(mSocket->is_open())
+            if(mImpl->mSocket.is_open())
             {
                 // error code
                 asio::error_code err;
 
                 // let the socket send queued messages
-                std::string message;
+				SocketPacket msg;
                 if(!mWritingData)
                 {
-                    if (mQueue.try_dequeue(message))
+                    if (mQueue.try_dequeue(msg))
                     {
                         mWritingData = true;
                         mWriteResponseTimer.reset();
                         mWriteResponseTimer.start();
 
-                        mWriteBuffer = message;
-                        asio::async_write(*mSocket,
-                                          asio::buffer(mWriteBuffer),
+                        mWriteBuffer = msg;
+                        asio::async_write(mImpl->mSocket,
+                                          asio::buffer(mWriteBuffer.data()),
                                           asio::transfer_exactly(mWriteBuffer.size()),
                                           [this](const asio::error_code& errorCode, std::size_t bytes_transferred)
                         {
@@ -275,15 +295,16 @@ namespace nap
                             handleError(errorCode);
 
                             // stop response timer
-                            mWriteResponseTimer.stop();
+                            mWriteResponseTimer.reset(); //stop();
                         });
                     }
-                }else
+                }
+				else
                 {
                     if(mWriteResponseTimer.getMillis().count() > mWriteTimeOutMillis)
                     {
                         // stop response timer
-                        mWriteResponseTimer.stop();
+                        mWriteResponseTimer.reset(); //stop();
 
                         // not writing data
                         mWritingData = false;
@@ -297,7 +318,7 @@ namespace nap
 
                         // close socket
                         asio::error_code error_code;
-                        mSocket->close(error_code);
+						mImpl->mSocket.close(error_code);
                         if(error_code)
                         {
                             logError(error_code.message());
@@ -315,7 +336,7 @@ namespace nap
                 if(!mReceivingData)
                 {
                     // get available bytes to read
-                    size_t available = mSocket->available(err);
+                    size_t available = mImpl->mSocket.available(err);
 
                     // bail on error
                     if (handleError(err))
@@ -328,8 +349,8 @@ namespace nap
                         mReadResponseTimer.start();
 
                         // receive incoming messages
-                        asio::async_read(*mSocket,
-                                         mStreamBuffer,
+                        asio::async_read(mImpl->mSocket,
+										 mImpl->mStreamBuffer,
                                          asio::transfer_exactly(available),
                                          [this](const asio::error_code& errorCode, std::size_t bytes_transferred)
                         {
@@ -337,13 +358,13 @@ namespace nap
                             mReceivingData = false;
 
                             // stop timer
-                            mReadResponseTimer.stop();
+                            mReadResponseTimer.reset(); //stop();
 
                             // Read the data received
-                            auto data = mStreamBuffer.data();
+                            auto data = mImpl->mStreamBuffer.data();
 
                             // Consume it after
-                            mStreamBuffer.consume(bytes_transferred);
+							mImpl->mStreamBuffer.consume(bytes_transferred);
 
                             if(!handleError(errorCode))
                             {
@@ -366,7 +387,7 @@ namespace nap
                     if(mReadResponseTimer.getMillis().count() > mReadTimeOutMillis)
                     {
                         // stop read response timer
-                        mReadResponseTimer.stop();
+                        mReadResponseTimer.reset(); //stop();
 
                         // stop sending data
                         mReceivingData = false;
@@ -380,7 +401,7 @@ namespace nap
 
                         // close socket
                         asio::error_code error_code;
-                        mSocket->close(error_code);
+						mImpl->mSocket.close(error_code);
                         if(error_code)
                         {
                             logError(error_code.message());
@@ -404,7 +425,7 @@ namespace nap
 
                 // shutdown active socket
                 asio::error_code err;
-                mSocket->shutdown(asio::socket_base::shutdown_both, err);
+				mImpl->mSocket.shutdown(asio::socket_base::shutdown_both, err);
                 if (err)
                 {
                     logError(err.message());
@@ -439,13 +460,13 @@ namespace nap
 
                 asio::error_code error_code;
                 mTimeoutTimer.reset();
-                mTimeoutTimer.stop();
+                mTimeoutTimer.reset(); //stop();
 
                 // log error to console
                 logError("Connect timeout occured!");
 
                 // close socket
-                mSocket->close(error_code);
+				mImpl->mSocket.close(error_code);
                 if(error_code)
                 {
                     logError(error_code.message());
@@ -468,8 +489,8 @@ namespace nap
     {
         while(mQueue.size_approx()>0)
         {
-            std::string message;
-            mQueue.try_dequeue(message);
+            SocketPacket msg;
+            mQueue.try_dequeue(msg);
         }
     }
 
@@ -513,7 +534,7 @@ namespace nap
     }
 
 
-    void SocketClient::addMessageReceivedSlot(Slot<const std::string&>& slot)
+    void SocketClient::addMessageReceivedSlot(Slot<const SocketPacket&>& slot)
     {
         mActionQueue.enqueue([this, &slot]()
         {
@@ -522,7 +543,7 @@ namespace nap
     }
 
 
-    void SocketClient::removeMessageReceivedSlot(Slot<const std::string&>& slot)
+    void SocketClient::removeMessageReceivedSlot(Slot<const SocketPacket&>& slot)
     {
         mActionQueue.enqueue([this, &slot]()
         {

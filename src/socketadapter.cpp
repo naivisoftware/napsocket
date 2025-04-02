@@ -24,18 +24,34 @@ namespace nap
 		if(!errorState.check(mThread !=nullptr, "Thread cannot be nullptr"))
 			return false;
 
+		return true;
+	}
+
+
+	bool SocketAdapter::start(utility::ErrorState& errorState)
+	{
+		if(!onStart(errorState))
+			return false;
+
 		mThread->registerAdapter(this);
 		return true;
 	}
 
 
-	void SocketAdapter::onDestroy()
+	void SocketAdapter::stop()
 	{
 		mThread->removeAdapter(this);
+		onStop();
 	}
 
 
-    bool SocketAdapter::handleAsioError(const asio::error_code& errorCode, utility::ErrorState& errorState, bool& success)
+	void SocketAdapter::process()
+	{
+		onProcess();
+	}
+
+
+	bool SocketAdapter::handleAsioError(const asio::error_code& errorCode, utility::ErrorState& errorState, bool& success)
     {
         if(errorCode)
         {
@@ -58,8 +74,8 @@ namespace nap
     }
 
 
-    asio::io_service& SocketAdapter::getIOService()
+    asio::io_service& SocketAdapter::getIOContext()
     {
-        return mThread->getIOService();
+        return mThread->getIOContext();
     }
 }

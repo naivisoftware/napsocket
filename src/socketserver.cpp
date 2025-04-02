@@ -1,7 +1,6 @@
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
-
 #include "socketserver.h"
 #include "socketthread.h"
 
@@ -16,54 +15,67 @@
 #include <thread>
 #include <mathutils.h>
 
-
-using asio::ip::address;
-using asio::ip::tcp;
-
 RTTI_BEGIN_CLASS(nap::SocketServer)
-        RTTI_PROPERTY("Port",			&nap::SocketServer::mPort,			nap::rtti::EPropertyMetaData::Default)
-        RTTI_PROPERTY("IP Address",		&nap::SocketServer::mIPAddress,	    nap::rtti::EPropertyMetaData::Default)
-        RTTI_PROPERTY("Enable Log",		&nap::SocketServer::mEnableLog,	    nap::rtti::EPropertyMetaData::Default)
+	RTTI_PROPERTY("Port",			&nap::SocketServer::mPort,			nap::rtti::EPropertyMetaData::Default)
+	RTTI_PROPERTY("IP Address",		&nap::SocketServer::mIPAddress,	    nap::rtti::EPropertyMetaData::Default)
+	RTTI_PROPERTY("Enable Log",		&nap::SocketServer::mEnableLog,	    nap::rtti::EPropertyMetaData::Default)
 RTTI_END_CLASS
 
 namespace nap
 {
+	//////////////////////////////////////////////////////////////////////////
+	// SocketServerASIO
+	//////////////////////////////////////////////////////////////////////////
+
+	class SocketServer::Impl
+	{
+	public:
+		Impl(asio::io_context& context) : mIOContext(context){}
+
+		asio::io_context& 			mIOContext;
+		asio::ip::tcp::endpoint 	mRemoteEndpoint;
+
+		asio::ip::tcp::acceptor		mAcceptor{ mIOContext };
+		asio::ip::tcp::socket		mWaitingSocket{ mIOContext };
+		std::unordered_map<std::string, asio::ip::tcp::socket> mSockets;
+	};
+
+
     //////////////////////////////////////////////////////////////////////////
     // SocketServer
     //////////////////////////////////////////////////////////////////////////
 
-    bool SocketServer::init(utility::ErrorState &errorState)
+    bool SocketServer::onStart(utility::ErrorState &errorState)
     {
+		// create asio implementation
+		mImpl = std::make_unique<SocketServer::Impl>(getIOContext());
+
         // when asio error occurs, init_success indicates whether initialization should fail or succeed
         bool init_success = false;
-        asio::error_code asio_error_code;
 
         // try to create ip address
         // when address property is left empty, bind to any local address
-        asio::ip::address address;
+		asio::error_code asio_error_code;
+		asio::ip::address address;
         if (mIPAddress.empty())
         {
             address = asio::ip::address_v4::any();
-        } else
+        }
+		else
         {
             address = asio::ip::make_address(mIPAddress, asio_error_code);
             if (handleAsioError(asio_error_code, errorState, init_success))
                 return init_success;
         }
 
-
         // create endpoint
-        mRemoteEndpoint = std::make_unique<tcp::endpoint>(address, mPort);
+        mImpl->mRemoteEndpoint = asio::ip::tcp::endpoint(address, mPort);
 
         // create acceptor and attach the acceptor callback
-        mAcceptor = std::make_unique<tcp::acceptor>(getIOService(), *mRemoteEndpoint.get());
+        mImpl->mAcceptor = asio::ip::tcp::acceptor(getIOContext(), mImpl->mRemoteEndpoint);
 
         // create new accepting socket
         acceptNewSocket();
-
-        // init the adapter
-        if(!SocketAdapter::init(errorState))
-            return false;
 
         return true;
     }
@@ -71,228 +83,248 @@ namespace nap
 
     void SocketServer::handleAccept(const asio::error_code& errorCode)
     {
-        bool error = errorCode.operator bool();
+        bool is_error = errorCode.operator bool();
         asio::error_code error_code = errorCode;
 
-        if(!error)
-        {
-            // log status
-            logInfo("Socket connected");
+		if(is_error)
+		{
+			// report is_error and accept a new socket
+			logError(error_code.message());
+			acceptNewSocket();
+			return;
+		}
 
-            // set no delay
-            mWaitingSocket->set_option(tcp::no_delay(mNoDelay), error_code);
-            bool error = error_code.operator bool();
-            if(!error)
-            {
-                // read all available bytes, this is to make sure socket stream is empty before we start receiving new data
-                size_t available = mWaitingSocket->available();
-                asio::streambuf receivedStreamBuffer;
-                asio::streambuf::mutable_buffers_type bufs = receivedStreamBuffer.prepare(available);
-                asio::error_code err;
-                mWaitingSocket->receive(bufs, asio::socket_base::message_end_of_record, err);
-                if (err)
-                {
-                    logError(err.message());
-                }
+		// log status
+		logInfo("Socket connected");
 
-                // create new message queue
-                std::string socket_id = math::generateUUID();
-                mMessageQueue.emplace(socket_id, moodycamel::ConcurrentQueue<std::string>());
-                mSockets.emplace(socket_id, std::move(mWaitingSocket));
+		// set no delay
+		mImpl->mWaitingSocket.set_option(asio::ip::tcp::no_delay(mNoDelay), error_code);
+		is_error = error_code.operator bool();
 
-                // create new accepting socket
-                acceptNewSocket();
+		if(is_error)
+		{
+			logError(error_code.message());
+			return;
+		}
 
-                // dispatch signal
-                socketConnected.trigger(socket_id);
-            }
-        }
+		// read all available bytes, this is to make sure socket stream is empty before we start receiving new data
+		size_t available = mImpl->mWaitingSocket.available();
+		asio::streambuf receivedStreamBuffer;
+		asio::streambuf::mutable_buffers_type bufs = receivedStreamBuffer.prepare(available);
 
-        if(error)
-        {
-            // log error
-            logError(error_code.message());
+		mImpl->mWaitingSocket.receive(bufs, asio::socket_base::message_end_of_record, error_code);
+		is_error = error_code.operator bool();
 
-            // create new accepting socket
-            acceptNewSocket();
-        }
+		if (is_error)
+		{
+			logError(error_code.message());
+		}
+
+		// create new message queue
+		std::string socket_id = math::generateUUID();
+		mMessageQueueMap.emplace(socket_id, moodycamel::ConcurrentQueue<SocketPacket>());
+		mImpl->mSockets.emplace(socket_id, std::move(mImpl->mWaitingSocket));
+
+		// create new accepting socket
+		acceptNewSocket();
+
+		// dispatch signal
+		socketConnected.trigger(socket_id);
     }
 
 
-    void SocketServer::onDestroy()
+    void SocketServer::onStop()
     {
         SocketAdapter::onDestroy();
 
         // shutdown sockets
-        for(auto& pair : mSockets)
+        for(auto& pair : mImpl->mSockets)
         {
-            asio::error_code asio_error_code;
-            pair.second->shutdown(asio::socket_base::shutdown_both,asio_error_code);
+            asio::error_code error_code;
+            pair.second.shutdown(asio::socket_base::shutdown_both, error_code);
 
             // log any errors
-            if (asio_error_code)
-            {
-                logError(asio_error_code.message());
-            }
+			bool is_error = error_code.operator bool();
+            if (is_error)
+                logError(error_code.message());
         }
 
-        mSockets.clear();
+		mImpl->mSockets.clear();
     }
 
 
-    void SocketServer::sendToAll(const std::string &message)
+    void SocketServer::sendToAll(const SocketPacket& message)
     {
-        for(auto& pair : mMessageQueue)
-        {
+        for(auto& pair : mMessageQueueMap)
             pair.second.enqueue(message);
-        }
     }
 
 
-    void SocketServer::send(const std::string &id, const std::string &message)
+	void SocketServer::sendToAll(SocketPacket&& message)
+	{
+		for(auto& pair : mMessageQueueMap)
+			pair.second.enqueue(std::move(message));
+	}
+
+
+    void SocketServer::send(const std::string &id, const SocketPacket& message)
     {
-        auto itr = mMessageQueue.find(id);
-        if(itr!=mMessageQueue.end())
+        auto it = mMessageQueueMap.find(id);
+        if(it == mMessageQueueMap.end())
         {
-            itr->second.enqueue(message);
-        }else
-        {
-            logError(utility::stringFormat("Cannot send message to socket, id %s not found!", id.c_str()));
+			logError(utility::stringFormat("Cannot send message to socket, id %s not found!", id.c_str()));
+			return;
         }
-    }
+		it->second.enqueue(message);
+	}
+
+
+	void SocketServer::send(const std::string &id, SocketPacket&& message)
+	{
+		auto it = mMessageQueueMap.find(id);
+		if(it == mMessageQueueMap.end())
+		{
+			logError(utility::stringFormat("Cannot send message to socket, id %s not found!", id.c_str()));
+			return;
+		}
+		it->second.enqueue(std::move(message));
+	}
 
 
     bool SocketServer::handleError(const std::string& id, asio::error_code& errorCode)
     {
-        // has an error occured, close socket and re-attach acceptor callback
-        if(errorCode)
-        {
-            // log any errors or info
-            logError(utility::stringFormat("Error occured, %s", errorCode.message().c_str()));
-            logInfo("Socket disconnected");
+		// has an error occured, close socket and re-attach acceptor callback
+		bool is_error = errorCode.operator bool();
+		if (!is_error)
+			return false;
 
-            // close the socket
-            asio::error_code err;
-            auto itr = mSockets.find(id);
-            assert(itr!=mSockets.end());
-            itr->second->shutdown(asio::socket_base::shutdown_both, err);
-            if (err)
-            {
-                logError(err.message());
-            }
+		// log any errors or info
+		logError(utility::stringFormat("Error occured, %s", errorCode.message().c_str()));
+		logInfo("Socket disconnected");
 
-            mSocketsToRemove.emplace_back(itr->first);
-            socketDisconnected.trigger(itr->first);
+		// close the socket
+		asio::error_code err;
+		auto it = mImpl->mSockets.find(id);
+		assert(it != mImpl->mSockets.end());
+		it->second.shutdown(asio::socket_base::shutdown_both, err);
+		if (err)
+			logError(err.message());
 
-            return true;
-        }
-
-        return false;
+		mSocketsToRemove.emplace_back(it->first);
+		socketDisconnected.trigger(it->first);
+		return true;
     }
 
 
     void SocketServer::acceptNewSocket()
     {
         // create socket
-        mWaitingSocket = std::make_unique<tcp::socket>(getIOService());
-        mAcceptor->async_accept(*mWaitingSocket, [this](const asio::error_code& errorCode)
+        mImpl->mWaitingSocket = asio::ip::tcp::socket(getIOContext());
+		mImpl->mAcceptor.async_accept(mImpl->mWaitingSocket, [this](const asio::error_code& errorCode)
         {
             handleAccept(errorCode);
         });
     }
 
-    void SocketServer::process()
+
+    void SocketServer::onProcess()
     {
         // first remove obsolete sockets
-        for(const auto& socket_to_remove : mSocketsToRemove)
-        {
-            mSockets.erase(socket_to_remove);
-            mMessageQueue.erase(socket_to_remove);
-        }
+		{
+			std::lock_guard<std::mutex> lock(mMutex);
+			for (const auto &socket_to_remove: mSocketsToRemove)
+			{
+				mImpl->mSockets.erase(socket_to_remove);
+				mMessageQueueMap.erase(socket_to_remove);
+			}
+		}
         mSocketsToRemove.clear();
 
-        for(auto& pair : mSockets)
+        for(auto& pair : mImpl->mSockets)
         {
             const auto& socket_id = pair.first;
-            auto& socket = *pair.second;
-            if(socket.is_open())
-            {
-                // error code
-                asio::error_code err;
+            auto& socket = pair.second;
+            if(!socket.is_open())
+            	continue;
 
-                // let the socket send queued messages
-                std::string message;
-                auto message_queue_itr = mMessageQueue.find(socket_id);
-                assert(message_queue_itr!=mMessageQueue.end());
-                auto& message_queue = message_queue_itr->second;
-                while(message_queue.try_dequeue(message))
-                {
-                    socket.send(asio::buffer(message), asio::socket_base::message_end_of_record, err);
+			// error code
+			asio::error_code err;
 
-                    if(err)
-                        break;
-                }
+			// let the socket send queued messages
+			{
+				std::lock_guard<std::mutex> lock(mMutex);
+				auto msg_queue_it = mMessageQueueMap.find(socket_id);
+				assert(msg_queue_it != mMessageQueueMap.end());
+				auto& msg_queue = msg_queue_it->second;
 
-                // bail on error
-                if (handleError(socket_id, err))
-                    continue;
+				SocketPacket msg;
+				while(msg_queue.try_dequeue(msg))
+				{
+					socket.send(asio::buffer(msg.data()), asio::socket_base::message_end_of_record, err);
+					if(err)
+						break;
+				}
+			}
 
-                // get available bytes
-                size_t available = socket.available(err);
+			// bail on error
+			if (handleError(socket_id, err))
+				continue;
 
-                // bail on error
-                if (handleError(socket_id, err))
-                    continue;
+			// get available bytes
+			size_t available = socket.available(err);
 
-                // receive incoming messages
-                asio::streambuf receivedStreamBuffer;
-                asio::streambuf::mutable_buffers_type bufs = receivedStreamBuffer.prepare(available);
-                socket.receive(bufs, asio::socket_base::message_end_of_record, err);
+			// bail on error
+			if (handleError(socket_id, err))
+				continue;
 
-                // bail on error
-                if (handleError(socket_id, err))
-                    continue;
+			// receive incoming messages
+			asio::streambuf rec_stream_buf;
+			asio::streambuf::mutable_buffers_type bufs = rec_stream_buf.prepare(available);
+			socket.receive(bufs, asio::socket_base::message_end_of_record, err);
 
-                // dispatch any received messages
-                for(auto& buf : bufs)
-                {
-                    if(buf.size()>0)
-                    {
-                        std::string received_message(static_cast<char*>(buf.data()), buf.size());
-                        messageReceived.trigger(socket_id, received_message);
-                    }
-                }
-            }
+			// bail on error
+			if (handleError(socket_id, err))
+				continue;
+
+			// dispatch any received messages
+			for(const auto& buf : bufs)
+			{
+				if(buf.size()<=0)
+					continue;
+
+				SocketPacket msg(static_cast<const uint8*>(buf.data()), buf.size());
+				packetReceived.trigger(socket_id, msg);
+			}
         }
     }
 
 
     void SocketServer::logError(const std::string& message)
     {
-        if(mEnableLog)
-        {
-            nap::Logger::error(*this, message);
-        }
+        if(!mEnableLog)
+        	return;
+
+		nap::Logger::error(*this, message);
     }
 
 
     void SocketServer::logInfo(const std::string& message)
     {
-        if(mEnableLog)
-        {
-            nap::Logger::info(*this, message);
-        }
+        if(!mEnableLog)
+        	return;
+
+		nap::Logger::info(*this, message);
     }
 
 
     void SocketServer::clearQueue()
     {
-        for(auto& pair : mMessageQueue)
+        for(auto& pair : mMessageQueueMap)
         {
             while(pair.second.size_approx()>0)
             {
-                std::string message;
-                pair.second.try_dequeue(message);
+                SocketPacket msg;
+                pair.second.try_dequeue(msg);
             }
         }
     }
@@ -301,16 +333,15 @@ namespace nap
     std::vector<std::string> SocketServer::getConnectedClientIDs() const
     {
         std::vector<std::string> clients;
-        for(const auto& pair : mSockets)
-        {
+        for(const auto& pair : mImpl->mSockets)
             clients.emplace_back(pair.first);
-        }
+
         return clients;
     }
 
 
     size_t SocketServer::getConnectedClientsCount() const
     {
-        return mSockets.size();
+        return mImpl->mSockets.size();
     }
 }

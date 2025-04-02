@@ -21,6 +21,12 @@
 #include <asio/io_service.hpp>
 #include <asio/system_error.hpp>
 
+// ASIO forward declaration
+namespace asio
+{
+	class io_context;
+}
+
 namespace nap
 {
 	//////////////////////////////////////////////////////////////////////////
@@ -57,8 +63,6 @@ namespace nap
 		 */
 		SocketThread(SocketService& service);
 
-        bool init(utility::ErrorState& errorState) override;
-
 		/**
 		 * Starts the UDPThread, spawns new thread if necessary or registers to UDPService
 		 * @param errorState contains any errors
@@ -70,15 +74,21 @@ namespace nap
 		 * Stops the SocketThread, stops own thread or removes itself from service
 		 */
 		virtual void stop() override;
-	public:
-		// properties
-		ESocketThreadUpdateMethod mUpdateMethod = ESocketThreadUpdateMethod::MAIN_THREAD; ///< Property: 'Update Method' the way the SocketThread should process adapters
+
+		/**
+		 * @return asio IO context
+		 */
+		asio::io_context& getIOContext();
 
 		/**
 		 * Call this when update method is set to manual.
 		 * If the update method is MAIN_THREAD or SPAWN_OWN_THREAD, this function will not do anything.
 		 */
 		void manualProcess();
+
+		// properties
+		ESocketThreadUpdateMethod mUpdateMethod = ESocketThreadUpdateMethod::MAIN_THREAD; ///< Property: 'Update Method' the way the SocketThread should process adapters
+
 	private:
 		/**
 		 * the threaded function
@@ -102,12 +112,6 @@ namespace nap
 		 */
 		void removeAdapter(SocketAdapter* adapter);
 
-        /**
-         * Returns reference to asio::io_service
-         * @return reference to asio::io_service
-         */
-        asio::io_service& getIOService(){ return mIOService; }
-
 		// threading
 		std::thread 										mThread;
 		std::mutex											mMutex;
@@ -115,13 +119,13 @@ namespace nap
 		std::function<void()> 								mManualProcessFunc;
 
 		// service
-        SocketService& 				mService;
+        SocketService& mService;
 
 		// adapters
-		std::vector<SocketAdapter*> 	mAdapters;
+		std::vector<SocketAdapter*> mAdapters;
 
-        // io service
-        asio::io_service 			mIOService;
+		struct Impl;
+		std::unique_ptr<Impl> mImpl;
 	};
 
 	// Object creator used for constructing the Socket thread
