@@ -8,10 +8,6 @@
 
 #include <nap/logger.h>
 
-using asio::ip::address;
-using asio::ip::tcp;
-using namespace std::chrono_literals;
-
 RTTI_BEGIN_ENUM(nap::ESocketThreadUpdateMethod)
 	RTTI_ENUM_VALUE(nap::ESocketThreadUpdateMethod::MAIN_THREAD, 		"Main Thread"),
 	RTTI_ENUM_VALUE(nap::ESocketThreadUpdateMethod::SPAWN_OWN_THREAD, 	"Spawn Own Thread"),
@@ -38,11 +34,10 @@ namespace nap
 	// SocketThread
 	//////////////////////////////////////////////////////////////////////////
 
-    SocketThread::SocketThread(SocketService & service) : mService(service)
+    SocketThread::SocketThread(SocketService& service) : mService(service)
 	{
 		mImpl = std::make_unique<Impl>();
-		mManualProcessFunc = [this]()
-		{
+		mManualProcessFunc = [this]() {
 			nap::Logger::warn(*this, "calling manual process function when thread update method is not manual!");
 		};
 	}
@@ -74,7 +69,7 @@ namespace nap
 
 	void SocketThread::stop()
 	{
-		if(mRun.load())
+		if (mRun.load())
 		{
             mRun.store(false);
 
@@ -96,9 +91,7 @@ namespace nap
 	void SocketThread::thread()
 	{
         while (mRun.load())
-        {
             process();
-        }
 	}
 
 
@@ -106,21 +99,13 @@ namespace nap
 	{
 		std::lock_guard lock(mMutex);
 
-        if(mImpl->mIOContext.stopped())
+        if (mImpl->mIOContext.stopped())
 			mImpl->mIOContext.restart();
 
-        for(auto& adapter : mAdapters)
-        {
+        for (auto& adapter : mAdapters)
             adapter->process();
-        }
 
-        asio::error_code err;
-		mImpl->mIOContext.poll(err);
-
-        if(err)
-        {
-            nap::Logger::error(*this, err.message());
-        }
+		mImpl->mIOContext.poll();
 	}
 
 
@@ -130,23 +115,20 @@ namespace nap
 	}
 
 
-	void SocketThread::removeAdapter(SocketAdapter * adapter)
+	void SocketThread::removeAdapter(SocketAdapter* adapter)
 	{
 		std::lock_guard lock(mMutex);
-
-		auto found_it = std::find_if(mAdapters.begin(), mAdapters.end(), [&](const auto& it)
-			{
-				return it == adapter;
-			});
+		auto found_it = std::find_if(mAdapters.begin(), mAdapters.end(), [&](const auto& it) {
+			return it == adapter;
+		});
 		assert(found_it != mAdapters.end());
 		mAdapters.erase(found_it);
 	}
 
 
-	void SocketThread::registerAdapter(SocketAdapter * adapter)
+	void SocketThread::registerAdapter(SocketAdapter* adapter)
 	{
 		std::lock_guard lock(mMutex);
-
 		mAdapters.emplace_back(adapter);
 	}
 

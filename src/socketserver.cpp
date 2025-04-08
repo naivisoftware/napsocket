@@ -50,23 +50,15 @@ namespace nap
 		// create asio implementation
 		mImpl = std::make_unique<SocketServer::Impl>(getIOContext());
 
-        // when asio error occurs, init_success indicates whether initialization should fail or succeed
-        bool init_success = false;
-
         // try to create ip address
         // when address property is left empty, bind to any local address
-		asio::error_code asio_error_code;
-		asio::ip::address address;
-        if (mIPAddress.empty())
-        {
-            address = asio::ip::address_v4::any();
-        }
-		else
-        {
-            address = asio::ip::make_address(mIPAddress, asio_error_code);
-            if (handleAsioError(asio_error_code, errorState, init_success))
-                return init_success;
-        }
+		asio::error_code err_code;
+		auto address = !mIPAddress.empty() ?
+			asio::ip::make_address(mIPAddress, err_code) :
+			asio::ip::address_v4::any();
+
+		if (!handleAsioError(err_code, errorState))
+			return false;
 
         // create endpoint
         mImpl->mRemoteEndpoint = asio::ip::tcp::endpoint(address, mPort);
@@ -78,58 +70,6 @@ namespace nap
         acceptNewSocket();
 
         return true;
-    }
-
-
-    void SocketServer::handleAccept(const asio::error_code& errorCode)
-    {
-        bool is_error = errorCode.operator bool();
-        asio::error_code error_code = errorCode;
-
-		if(is_error)
-		{
-			// report is_error and accept a new socket
-			logError(error_code.message());
-			acceptNewSocket();
-			return;
-		}
-
-		// log status
-		logInfo("Socket connected");
-
-		// set no delay
-		mImpl->mWaitingSocket.set_option(asio::ip::tcp::no_delay(mNoDelay), error_code);
-		is_error = error_code.operator bool();
-
-		if(is_error)
-		{
-			logError(error_code.message());
-			return;
-		}
-
-		// read all available bytes, this is to make sure socket stream is empty before we start receiving new data
-		size_t available = mImpl->mWaitingSocket.available();
-		asio::streambuf receivedStreamBuffer;
-		asio::streambuf::mutable_buffers_type bufs = receivedStreamBuffer.prepare(available);
-
-		mImpl->mWaitingSocket.receive(bufs, asio::socket_base::message_end_of_record, error_code);
-		is_error = error_code.operator bool();
-
-		if (is_error)
-		{
-			logError(error_code.message());
-		}
-
-		// create new message queue
-		std::string socket_id = math::generateUUID();
-		mMessageQueueMap.emplace(socket_id, moodycamel::ConcurrentQueue<SocketPacket>());
-		mImpl->mSockets.emplace(socket_id, std::move(mImpl->mWaitingSocket));
-
-		// create new accepting socket
-		acceptNewSocket();
-
-		// dispatch signal
-		socketConnected.trigger(socket_id);
     }
 
 
@@ -191,7 +131,7 @@ namespace nap
 	}
 
 
-    bool SocketServer::handleError(const std::string& id, asio::error_code& errorCode)
+    bool SocketServer::handleProcessError(const std::string& id, asio::error_code& errorCode)
     {
 		// has an error occured, close socket and re-attach acceptor callback
 		bool is_error = errorCode.operator bool();
@@ -220,9 +160,48 @@ namespace nap
     {
         // create socket
         mImpl->mWaitingSocket = asio::ip::tcp::socket(getIOContext());
-		mImpl->mAcceptor.async_accept(mImpl->mWaitingSocket, [this](const asio::error_code& errorCode)
+		mImpl->mAcceptor.async_accept(mImpl->mWaitingSocket, [this](asio::error_code ec)
         {
-            handleAccept(errorCode);
+			if (ec)
+			{
+				// report error and accept a new socket
+				logError(ec.message());
+				acceptNewSocket();
+				return;
+			}
+
+			// log status
+			logInfo("Socket connected");
+
+			// set no delay
+			mImpl->mWaitingSocket.set_option(asio::ip::tcp::no_delay(mNoDelay), ec);
+
+			if (ec)
+			{
+				logError(ec.message());
+				return;
+			}
+
+			// read all available bytes, this is to make sure socket stream is empty before we start receiving new data
+			size_t available = mImpl->mWaitingSocket.available();
+			asio::streambuf receivedStreamBuffer;
+			asio::streambuf::mutable_buffers_type bufs = receivedStreamBuffer.prepare(available);
+
+			mImpl->mWaitingSocket.receive(bufs, asio::socket_base::message_end_of_record, ec);
+
+			if (ec)
+				logError(ec.message());
+
+			// create new message queue
+			std::string socket_id = math::generateUUID();
+			mMessageQueueMap.emplace(socket_id, moodycamel::ConcurrentQueue<SocketPacket>());
+			mImpl->mSockets.emplace(socket_id, std::move(mImpl->mWaitingSocket));
+
+			// create new accepting socket
+			acceptNewSocket();
+
+			// dispatch signal
+			socketConnected.trigger(socket_id);
         });
     }
 
@@ -267,14 +246,14 @@ namespace nap
 			}
 
 			// bail on error
-			if (handleError(socket_id, err))
+			if (handleProcessError(socket_id, err))
 				continue;
 
 			// get available bytes
 			size_t available = socket.available(err);
 
 			// bail on error
-			if (handleError(socket_id, err))
+			if (handleProcessError(socket_id, err))
 				continue;
 
 			// receive incoming messages
@@ -283,7 +262,7 @@ namespace nap
 			socket.receive(bufs, asio::socket_base::message_end_of_record, err);
 
 			// bail on error
-			if (handleError(socket_id, err))
+			if (handleProcessError(socket_id, err))
 				continue;
 
 			// dispatch any received messages
@@ -301,19 +280,15 @@ namespace nap
 
     void SocketServer::logError(const std::string& message)
     {
-        if(!mEnableLog)
-        	return;
-
-		nap::Logger::error(*this, message);
+        if (mEnableLog)
+        	nap::Logger::error(*this, message);
     }
 
 
     void SocketServer::logInfo(const std::string& message)
     {
-        if(!mEnableLog)
-        	return;
-
-		nap::Logger::info(*this, message);
+        if (mEnableLog)
+        	nap::Logger::info(*this, message);
     }
 
 

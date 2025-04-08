@@ -54,32 +54,28 @@ namespace nap
 		// create asio implementation
 		mImpl = std::make_unique<SocketClient::Impl>(getIOContext());
 
-		// when asio error occurs, init_success indicates whether initialization should fail or succeed
-        bool init_success = false;
-        asio::error_code asio_error_code;
-
 		// try to open socket
-		mImpl->mSocket.open(asio::ip::tcp::v4(), asio_error_code);
-		if(handleAsioError(asio_error_code, errorState, init_success))
-			return init_success;
+		asio::error_code err_code;
+		mImpl->mSocket.open(asio::ip::tcp::v4(), err_code);
+		if (!handleAsioError(err_code, errorState))
+			return false;
 
 		// resolve ip address from endpoint
 		asio::ip::tcp::resolver resolver(getIOContext());
 		asio::ip::tcp::resolver::query query(mRemoteIp, "80");
-		asio::ip::tcp::resolver::iterator iter = resolver.resolve(query, asio_error_code);
-		if(handleAsioError(asio_error_code, errorState, init_success))
-			return init_success;
+		auto it = resolver.resolve(query, err_code);
+		if (!handleAsioError(err_code, errorState))
+			return false;
 
-		asio::ip::tcp::endpoint endpoint = iter->endpoint();
-		auto address = asio::ip::address::from_string(endpoint.address().to_string(), asio_error_code);
-        if(handleAsioError(asio_error_code, errorState, init_success))
-            return init_success;
+		auto address = asio::ip::address::from_string(it->endpoint().address().to_string(), err_code);
+        if (!handleAsioError(err_code, errorState))
+            return false;
 
         // create endpoint
         mImpl->mRemoteEndpoint = asio::ip::tcp::endpoint(address, mPort);
 
         // connect now if we need to
-        if(mConnectOnInit)
+        if (mConnectOnInit)
             connect();
 
 		return true;

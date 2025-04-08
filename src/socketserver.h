@@ -108,23 +108,12 @@ namespace nap
 
     private:
         /**
-         * Called when a new socket is connected
-         * @param errorCode holds any error generated during connect
-         */
-        void handleAccept(const asio::error_code& errorCode);
-
-        /**
          * Called when an error occurs in process(), closes socket with given id
          * @param id the id of the socket that generates the error
          * @param errorCode the errorcode
          * @return whether an error is handled, if errorCode is empty, will return false
          */
-        bool handleError(const std::string& id, asio::error_code& errorCode);
-
-        /**
-         * Clears current message queue
-         */
-        void clearQueue();
+        bool handleProcessError(const std::string& id, asio::error_code& errorCode);
 
         /**
          * Log an error to the console
@@ -137,6 +126,11 @@ namespace nap
          * @param message the message to log
          */
         void logInfo(const std::string& message);
+
+		/**
+		 * Clears current message queue
+		 */
+		void clearQueue();
 
         /**
          * Creates a new socket and tells the acceptor to wait for new connections

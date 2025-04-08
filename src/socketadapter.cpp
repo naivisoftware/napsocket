@@ -51,26 +51,18 @@ namespace nap
 	}
 
 
-	bool SocketAdapter::handleAsioError(const asio::error_code& errorCode, utility::ErrorState& errorState, bool& success)
+	bool SocketAdapter::handleAsioError(const asio::error_code& errorCode, utility::ErrorState& errorState)
     {
-        if(errorCode)
-        {
-            if(!mAllowFailure)
-            {
-                success = false;
-                errorState.fail(errorCode.message());
+		if (!errorCode)
+			return true;
 
-                return true;
-            }else
-            {
-                success = true;
-                nap::Logger::error(*this, errorCode.message());
-
-                return true;
-            }
-        }
-
-        return false;
+		if (!mAllowFailure)
+		{
+			errorState.fail("%s: %s", mID.c_str(), errorCode.message().c_str());
+			return false;
+		}
+		nap::Logger::error(*this, errorCode.message());
+		return true;
     }
 
 

@@ -75,7 +75,13 @@ namespace nap
 
 		void process();
 
-        bool handleAsioError(const asio::error_code& errorCode, utility::ErrorState& errorState, bool& success);
+		/**
+		 * Handles asio error, return value based on whether the action should have succeeded
+		 * @param errorCode the asio error code to evaluate
+		 * @param errorState the errorState if the action failed and success is mandatory
+		 * @return whether the program may keep running
+		 */
+        bool handleAsioError(const asio::error_code& errorCode, utility::ErrorState& errorState);
 
         asio::io_context& getIOContext();
 	};

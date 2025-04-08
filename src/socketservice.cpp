@@ -45,17 +45,14 @@ namespace nap
 	void SocketService::update(double deltaTime)
 	{
 		for(auto* thread : mThreads)
-		{
 			thread->process();
-		}
 	}
 
 
 	void SocketService::removeSocketThread(SocketThread* thread)
 	{
-		auto found_it = std::find_if(mThreads.begin(), mThreads.end(), [&](const auto& it)
-		{
-		  return it == thread;
+		auto found_it = std::find_if(mThreads.begin(), mThreads.end(), [&](const auto& it) {
+			return it == thread;
 		});
 		assert(found_it != mThreads.end());
 		mThreads.erase(found_it);
