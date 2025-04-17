@@ -63,8 +63,17 @@ namespace nap
         // create endpoint
         mImpl->mRemoteEndpoint = asio::ip::tcp::endpoint(address, mPort);
 
-        // create acceptor and attach the acceptor callback
-        mImpl->mAcceptor = asio::ip::tcp::acceptor(getIOContext(), mImpl->mRemoteEndpoint);
+        // create acceptor
+        mImpl->mAcceptor = asio::ip::tcp::acceptor(getIOContext());
+		mImpl->mAcceptor.open(mImpl->mRemoteEndpoint.protocol());
+
+		// bind socket
+		mImpl->mAcceptor.bind(mImpl->mRemoteEndpoint, err_code);
+		if (!handleAsioError(err_code, errorState))
+			return false;
+
+		// accept connections
+		mImpl->mAcceptor.listen();
 
         // create new accepting socket
         acceptNewSocket();
