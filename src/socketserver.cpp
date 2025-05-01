@@ -218,13 +218,10 @@ namespace nap
     void SocketServer::onProcess()
     {
         // first remove obsolete sockets
+		for (const auto& socket_to_remove : mSocketsToRemove)
 		{
-			std::lock_guard<std::mutex> lock(mMutex);
-			for (const auto &socket_to_remove: mSocketsToRemove)
-			{
-				mImpl->mSockets.erase(socket_to_remove);
-				mMessageQueueMap.erase(socket_to_remove);
-			}
+			mImpl->mSockets.erase(socket_to_remove);
+			mMessageQueueMap.erase(socket_to_remove);
 		}
         mSocketsToRemove.clear();
 
@@ -239,19 +236,16 @@ namespace nap
 			asio::error_code err;
 
 			// let the socket send queued messages
-			{
-				std::lock_guard<std::mutex> lock(mMutex);
-				auto msg_queue_it = mMessageQueueMap.find(socket_id);
-				assert(msg_queue_it != mMessageQueueMap.end());
-				auto& msg_queue = msg_queue_it->second;
+			auto msg_queue_it = mMessageQueueMap.find(socket_id);
+			assert(msg_queue_it != mMessageQueueMap.end());
+			auto& msg_queue = msg_queue_it->second;
 
-				SocketPacket msg;
-				while(msg_queue.try_dequeue(msg))
-				{
-					socket.send(asio::buffer(msg.data()), asio::socket_base::message_end_of_record, err);
-					if(err)
-						break;
-				}
+			SocketPacket msg;
+			while(msg_queue.try_dequeue(msg))
+			{
+				socket.send(asio::buffer(msg.data()), 0, err);
+				if(err)
+					break;
 			}
 
 			// bail on error

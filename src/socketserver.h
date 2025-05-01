@@ -143,7 +143,6 @@ namespace nap
 
         // Threading
         std::unordered_map<std::string, moodycamel::ConcurrentQueue<SocketPacket>> 	mMessageQueueMap;
-        std::vector<std::string> mSocketsToRemove;
-		std::mutex mMutex;	//< Mutex for accessing the message queue map
+		std::vector<std::string> mSocketsToRemove;
 	};
 }
