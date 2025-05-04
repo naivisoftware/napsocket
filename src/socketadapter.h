@@ -4,29 +4,38 @@
 
 #pragma once
 
-// Nap includes
-#include <nap/resourceptr.h>
-#include <socketthread.h>
+// Local includes
+#include "socketpool.h"
+#include "socketpacket.h"
+#include "socketid.h"
 
 // ASIO includes
-#include <asio/ts/buffer.hpp>
-#include <asio/ts/internet.hpp>
-#include <asio/io_service.hpp>
-#include <asio/system_error.hpp>
+#include <asio/error_code.hpp>
+
+// NAP includes
+#include <nap/resourceptr.h>
+#include <nap/device.h>
 
 namespace nap
 {
 	/**
 	 * Base class of specific Socket client and server resources.
 	 * process() is automatically called by the thread this adapter links to.
-	 * Both SocketClient & SocketServer extend UDPAdapter.
+	 * Both SocketClient & SocketServer extend SocketAdapter.
 	 */
 	class NAPAPI SocketAdapter : public Device
 	{
-		friend class SocketThread;
+		friend class SocketConnection;
 
 		RTTI_ENABLE(Device)
 	public:
+		/**
+		 * Constructor
+		 * @param service reference to Socket service
+		 */
+		SocketAdapter(SocketService& service) :
+			mService(service) {}
+
 		/**
 		 * Initialization
 		 * @param error contains error information
@@ -35,46 +44,25 @@ namespace nap
 		virtual bool init(utility::ErrorState& errorState) override;
 
 		/**
-		 * Start the adapter. Called after initialization.
-		 * When called it is safe to assume that all dependencies have been resolved up to this point.
-		 * Internally calls virtual method 'onStart' that is implemented in derived class
-		 * Upon successfull start, registers adapter to UDP thread
-		 * @param errorState The error state
-		 * @return: true on success
+		 *
 		 */
-		virtual bool start(utility::ErrorState& errorState) override final;
+		virtual bool start(utility::ErrorState& errorState) override;
 
 		/**
-		 * Called when the adapter needs to be stopped, but only if start has previously been called on this Device.
-		 * It is safe to assume that when stop is called the device is in a 'started' state. Called in reverse init order.
-		 * Removed adapter from UDP thread
+		 *
 		 */
-		virtual void stop() override final;
+		virtual void stop() override;
 
-		ResourcePtr<SocketThread> mThread;		///< Property: 'Thread' the socket thread the adapter registers itself to
-        bool mAllowFailure = false;				///< Property: 'AllowFailure' if binding to socket is allowed to fail on initialization
+		/**
+		 *
+		 */
+		virtual void process() = 0;
+
+		ResourcePtr<SocketPool> mPool;			///< Property: 'Pool' Shared context
+		bool mAllowFailure = false;				///< Property: 'AllowFailure' if binding to socket is allowed to fail on initialization
 	    bool mNoDelay = true;					///< Property: 'No Delay' disables Nagle algorithm
 
 	protected:
-		/**
-         * Called by start method and needs to be implemented by derived class
-         * @param errorState The error state
-         * @return: true on success
-         */
-		virtual bool onStart(utility::ErrorState& errorState) = 0;
-
-		/**
-		 * Called by stop method and needs to be implemented by derived class
-		 */
-		virtual void onStop() = 0;
-
-		/**
-		 * called by a UDPThread
-		 */
-		virtual void onProcess() = 0;
-
-		void process();
-
 		/**
 		 * Handles asio error, return value based on whether the action should have succeeded
 		 * @param errorCode the asio error code to evaluate
@@ -83,6 +71,12 @@ namespace nap
 		 */
         bool handleAsioError(const asio::error_code& errorCode, utility::ErrorState& errorState);
 
-        asio::io_context& getIOContext();
+		// Events
+		virtual void onPacketReceived(const socket::ID& id, const SocketPacket& packet) {};
+		virtual void onSocketConnected(const socket::ID& id) {};
+		virtual void onSocketDisconnected(const socket::ID& id) {};
+
+	private:
+		SocketService& mService;
 	};
 }

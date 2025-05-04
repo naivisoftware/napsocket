@@ -3,14 +3,19 @@
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
 #include "socketadapter.h"
-#include "socketthread.h"
+#include "socketservice.h"
+#include "socketconnection.h"
 
+// ASIO includes
+#include <asio/error_code.hpp>
+
+// External includes
 #include <nap/logger.h>
 
 RTTI_BEGIN_CLASS_NO_DEFAULT_CONSTRUCTOR(nap::SocketAdapter)
-	RTTI_PROPERTY("Thread", &nap::SocketAdapter::mThread, nap::rtti::EPropertyMetaData::Required)
-    RTTI_PROPERTY("AllowFailure", &nap::SocketAdapter::mAllowFailure, nap::rtti::EPropertyMetaData::Default)
-    RTTI_PROPERTY("No Delay", &nap::SocketAdapter::mNoDelay, nap::rtti::EPropertyMetaData::Default)
+	RTTI_PROPERTY("Pool",			&nap::SocketAdapter::mPool,			nap::rtti::EPropertyMetaData::Required)
+    RTTI_PROPERTY("AllowFailure", 	&nap::SocketAdapter::mAllowFailure, nap::rtti::EPropertyMetaData::Default)
+    RTTI_PROPERTY("No Delay", 		&nap::SocketAdapter::mNoDelay, 		nap::rtti::EPropertyMetaData::Default)
 RTTI_END_CLASS
 
 namespace nap
@@ -21,7 +26,7 @@ namespace nap
 
 	bool SocketAdapter::init(utility::ErrorState& errorState)
 	{
-		if(!errorState.check(mThread !=nullptr, "Thread cannot be nullptr"))
+		if (!errorState.check(mPool != nullptr, "Missing Socket Pool"))
 			return false;
 
 		return true;
@@ -30,24 +35,14 @@ namespace nap
 
 	bool SocketAdapter::start(utility::ErrorState& errorState)
 	{
-		if(!onStart(errorState))
-			return false;
-
-		mThread->registerAdapter(this);
+		mService.registerSocketAdapter(*this);
 		return true;
 	}
 
 
 	void SocketAdapter::stop()
 	{
-		mThread->removeAdapter(this);
-		onStop();
-	}
-
-
-	void SocketAdapter::process()
-	{
-		onProcess();
+		mService.removeSocketAdapter(*this);
 	}
 
 
@@ -61,13 +56,7 @@ namespace nap
 			errorState.fail("%s: %s", mID.c_str(), errorCode.message().c_str());
 			return false;
 		}
-		nap::Logger::error(*this, errorCode.message());
+		nap::Logger::error(*this, errorCode.message().c_str());
 		return true;
-    }
-
-
-    asio::io_service& SocketAdapter::getIOContext()
-    {
-        return mThread->getIOContext();
     }
 }

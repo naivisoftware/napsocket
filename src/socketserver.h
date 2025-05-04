@@ -6,7 +6,6 @@
 // External includes
 #include <thread>
 #include <mutex>
-#include <concurrentqueue.h>
 
 // NAP includes
 #include <nap/device.h>
@@ -14,8 +13,11 @@
 #include <nap/signalslot.h>
 
 // Local includes
+#include "socketconnection.h"
 #include "socketadapter.h"
 #include "socketpacket.h"
+#include "socketpool.h"
+#include "socketid.h"
 
 namespace nap
 {
@@ -28,6 +30,9 @@ namespace nap
     {
         RTTI_ENABLE(SocketAdapter)
     public:
+		// Constructor
+		SocketServer(SocketService& service);
+
         /**
          * Send message to all connected sockets
          * @param message the message
@@ -45,66 +50,54 @@ namespace nap
          * @param id client id
          * @param message the message
          */
-        void send(const std::string& id, const SocketPacket& message);
+        void send(const socket::ID& id, const SocketPacket& message);
 
 		/**
 		 * Send message to specific socket
 		 * @param id client id
 		 * @param message the message
 		 */
-		void send(const std::string& id, SocketPacket&& message);
-
-		/**
-         * Returns vector with all id's of connected clients
-         * @return vector containing client ids
-         */
-        std::vector<std::string> getConnectedClientIDs() const;
+		void send(const socket::ID& id, SocketPacket&& message);
 
         /**
-         * Returns amount of connected clients
-         * @return amount of connected clients
-         */
-        size_t getConnectedClientsCount() const;
-
-        /**
-         * Packet received signal will be dispatched on the thread this SocketAdapter is registered to, see SocketThread
+         * Packet received signal will be dispatched on the thread this SocketAdapter is registered to, see SocketPool
          * First argument is id, second is received message
          */
-        Signal<const std::string&, const SocketPacket&> packetReceived;
+        Signal<const socket::ID&, const SocketPacket&> packetReceived;
 
         /**
-         * Socket connected signal, will be dispatched on the thread this SocketAdapter is registered to, see SocketThread
+         * Socket connected signal, will be dispatched on the thread this SocketAdapter is registered to, see SocketPool
          * Argument is id of socket connected
          */
-        Signal<const std::string&> socketConnected;
+        Signal<const socket::ID&> socketConnected;
 
         /**
-         * Socket disconnected signal, will be dispatched on the thread this SocketAdapter is registered to, see SocketThread
+         * Socket disconnected signal, will be dispatched on the thread this SocketAdapter is registered to, see SocketPool
          * Argument is id of socket disconnected
          */
-        Signal<const std::string&> socketDisconnected;
+        Signal<const socket::ID&> socketDisconnected;
 
-		int mPort 						= 13251;		///< Property: 'Port' the port the server socket binds to
-		std::string mIPAddress			= "";	        ///< Property: 'IP Address' local ip address to bind to, if left empty will bind to any local address
-		bool mEnableLog                 = false;        ///< Property: 'Enable Log' whether the server should log to the console
+		int mPort = 13251;				///< Property: 'Port' the port the server socket binds to
+		std::string mIPAddress;			///< Property: 'IP Address' local ip address to bind to, if left empty will bind to any local address
+		bool mEnableLog = false;        ///< Property: 'Enable Log' whether the server should log to the console
 
 	protected:
 		/**
 		 * Called when server socket needs to be created
 		 * @param errorState The error state
-		 * @return: true on success
+		 * @return true on success
 		 */
-		virtual bool onStart(utility::ErrorState& errorState) override final;
+		virtual bool start(utility::ErrorState& errorState) override final;
 
 		/**
 		 * Called when socket needs to be closed
 		 */
-		virtual void onStop() override final;
+		virtual void stop() override final;
 
 		/**
-		 * The process function
+		 *
 		 */
-		void onProcess() override final;
+		virtual void process() override;
 
     private:
         /**
@@ -113,7 +106,7 @@ namespace nap
          * @param errorCode the errorcode
          * @return whether an error is handled, if errorCode is empty, will return false
          */
-        bool handleProcessError(const std::string& id, asio::error_code& errorCode);
+        bool handleProcessError(const socket::ID& id, asio::error_code& errorCode);
 
         /**
          * Log an error to the console
@@ -128,21 +121,34 @@ namespace nap
         void logInfo(const std::string& message);
 
 		/**
-		 * Clears current message queue
-		 */
-		void clearQueue();
-
-        /**
          * Creates a new socket and tells the acceptor to wait for new connections
          */
         void acceptNewSocket();
 
-		// Server specific ASIO implementation
+		/**
+		 *
+		 * @param id
+		 * @param packet
+		 */
+		virtual void onPacketReceived(const socket::ID& id, const SocketPacket& packet) override;
+
+		/**
+		 *
+		 * @param id
+		 */
+		virtual void onSocketDisconnected(const socket::ID& id) override;
+
+		// Server specific ASIO resources
 		class Impl;
 		std::unique_ptr<Impl> mImpl;
 
+		// Connections
+		std::unordered_map<socket::ID, std::shared_ptr<SocketConnection>> mConnections;
+
         // Threading
-        std::unordered_map<std::string, moodycamel::ConcurrentQueue<SocketPacket>> 	mMessageQueueMap;
-		std::vector<std::string> mSocketsToRemove;
+		std::mutex mConnectionsMutex;
 	};
+
+	// Object creator
+	using SocketServerObjectCreator = rtti::ObjectCreator<SocketServer, SocketService>;
 }

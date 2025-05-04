@@ -24,13 +24,16 @@ namespace nap
     /**
      * SocketClient creates a asio::tcp::socket and tries to connect to an endpoint.
      * Once connected it is able to send and receive data as std::strings
-     * SocketClient extends on SocketAdapter, this means the process() function will be called by the SocketThread
+     * SocketClient extends on SocketAdapter, this means the process() function will be called by the SocketPool
      * assigned to the SocketAdapter.
      */
 	class NAPAPI SocketClient final : public SocketAdapter
 	{
 		RTTI_ENABLE(SocketAdapter)
 	public:
+		// Constructor
+		SocketClient(SocketService& service);
+
         /**
          * Send message to server
          * @param message the message
@@ -88,17 +91,17 @@ namespace nap
 		 * @param errorState contains error information
 		 * @return true on success
 		 */
-		bool onStart(utility::ErrorState& errorState) override final;
+		bool start(utility::ErrorState& errorState) override final;
 
 		/**
 		 * Called when socket needs to be closed
 		 */
-		void onStop() override final;
+		void stop() override final;
 
 		/**
-		 * The process function
+		 *
 		 */
-		void onProcess() override final;
+		virtual void process() override {};
 
     private:
         // Signals
@@ -110,7 +113,7 @@ namespace nap
         Signal<const SocketPacket&> dataReceived;
 
         /**
-         * Connected signal, dispatched on thread assigned to this SocketAdapter
+         * Connected signal, dispatched on thread) assigned to this SocketAdapter
          */
         Signal<> connected;
 
@@ -172,4 +175,7 @@ namespace nap
 		class Impl;
 		std::unique_ptr<Impl> mImpl;
 	};
+
+	// Object creator
+	using SocketClientObjectCreator = rtti::ObjectCreator<SocketClient, SocketService>;
 }

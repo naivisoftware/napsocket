@@ -17,7 +17,16 @@ namespace nap
 	 */
 	struct NAPAPI SocketPacket final
 	{
+		friend class SocketConnection;
 	public:
+		struct Header
+		{
+			Header() = default;
+			Header(uint32 size) : mSize(size) {}
+			Header(size_t size) : mSize(size) {}
+			uint32 mSize = 0;
+		};
+
 		// Default constructor
 		SocketPacket() = default;
 
@@ -28,34 +37,34 @@ namespace nap
 		SocketPacket& operator=(const SocketPacket& other) = default;
 
 		// Move constructor
-		SocketPacket(SocketPacket&& other) noexcept						{ mBuffer = std::move(other.mBuffer); }
+		SocketPacket(SocketPacket&& other) noexcept;
 
 		// Move assignment operator
-		SocketPacket& operator=(SocketPacket&& other) noexcept			{ mBuffer = std::move(other.mBuffer); return *this;  }
+		SocketPacket& operator=(SocketPacket&& other) noexcept;
 
 		/**
 		 * SocketPacket constructor copies the contents of string into buffer
 		 */
-		SocketPacket(const std::string& string) noexcept				{ std::copy(string.begin(), string.end(), std::back_inserter(mBuffer)); }
+		SocketPacket(const std::string& string) noexcept;
 
 		/**
 		 * SocketPacket constructor moves the contents of supplied buffer if rvalue
 		 * @param buffer the buffer to be copied
 		 */
-		SocketPacket(std::vector<nap::uint8>&& buffer) : mBuffer(std::move(buffer)){}
+		SocketPacket(std::vector<nap::uint8>&& buffer);
 
 		/**
 		 * SocketPacket constructor copies the contents of supplied buffer
 		 * @param buffer the buffer to be copied
 		 */
-		SocketPacket(const std::vector<nap::uint8>& buffer) : mBuffer(buffer) {}
+		SocketPacket(const std::vector<nap::uint8>& buffer);
 
 		/**
 		 * SocketPacket constructor copies the contents of supplied data
 		 * @param data pointer to the buffer to be copied
 		 * @param size size of the copy in bytes
 		 */
-		SocketPacket(const uint8* data, size_t size) : mBuffer(size) { std::memcpy(mBuffer.data(), data, size); }
+		SocketPacket(const uint8* data, size_t size);
 
 		/**
 		 * returns const reference to vector holding data
@@ -73,7 +82,9 @@ namespace nap
 		 * @return string with contents of internal buffer
 		 */
 		std::string toString() const{ return std::string(mBuffer.begin(), mBuffer.end()); }
+
 	private:
-		std::vector<nap::uint8> mBuffer; ///< Vector containing packet data
+		Header mHeader;				///< Header containing information about the message
+		std::vector<uint8> mBuffer; ///< Vector containing packet data
 	};
 }

@@ -3,9 +3,9 @@
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
 #include "socketclient.h"
+#include "socketservice.h"
 
 // External includes
-#include <asio/ts/buffer.hpp>
 #include <asio/ts/internet.hpp>
 #include <asio/io_service.hpp>
 #include <asio/system_error.hpp>
@@ -14,7 +14,8 @@
 
 #include <thread>
 
-RTTI_BEGIN_CLASS(nap::SocketClient)
+RTTI_BEGIN_CLASS_NO_DEFAULT_CONSTRUCTOR(nap::SocketClient)
+RTTI_CONSTRUCTOR(nap::SocketService&)
 	RTTI_PROPERTY("Endpoint",					&nap::SocketClient::mRemoteIp,						nap::rtti::EPropertyMetaData::Default)
 	RTTI_PROPERTY("Port",						&nap::SocketClient::mPort,							nap::rtti::EPropertyMetaData::Default)
     RTTI_PROPERTY("Connect on init",            &nap::SocketClient::mConnectOnInit,                 nap::rtti::EPropertyMetaData::Default)
@@ -35,7 +36,7 @@ namespace nap
 	class SocketClient::Impl
 	{
 	public:
-		Impl(asio::io_context& context) : mIOContext(context){}
+		Impl(asio::io_context& context) : mIOContext(context) {}
 
 		// ASIO
 		asio::io_context& 			mIOContext;
@@ -49,10 +50,15 @@ namespace nap
 	// SocketClient
 	//////////////////////////////////////////////////////////////////////////
 
-	bool SocketClient::onStart(utility::ErrorState& errorState)
+	// Constructor
+	SocketClient::SocketClient(SocketService& service) :
+		SocketAdapter(service) {}
+
+
+	bool SocketClient::start(utility::ErrorState& errorState)
 	{
 		// create asio implementation
-		mImpl = std::make_unique<SocketClient::Impl>(getIOContext());
+		mImpl = std::make_unique<SocketClient::Impl>(mPool->getContext());
 
 		// try to open socket
 		asio::error_code err_code;
@@ -61,7 +67,7 @@ namespace nap
 			return false;
 
 		// resolve ip address from endpoint
-		asio::ip::tcp::resolver resolver(getIOContext());
+		asio::ip::tcp::resolver resolver(mPool->getContext());
 		asio::ip::tcp::resolver::query query(mRemoteIp, "80");
 		auto it = resolver.resolve(query, err_code);
 		if (!handleAsioError(err_code, errorState))
@@ -133,7 +139,7 @@ namespace nap
     }
 
 
-	void SocketClient::onStop()
+	void SocketClient::stop()
 	{
         mSocketReady.store(false);
 		asio::error_code err;
@@ -253,232 +259,232 @@ namespace nap
     }
 
 
-	void SocketClient::onProcess()
-	{
-        std::function<void()> action;
-        while(mActionQueue.try_dequeue(action))
-        {
-            action();
-        }
-
-        if (mSocketReady.load())
-        {
-            if(mImpl->mSocket.is_open())
-            {
-                // error code
-                asio::error_code err;
-
-                // let the socket send queued messages
-				SocketPacket msg;
-                if(!mWritingData)
-                {
-                    if (mQueue.try_dequeue(msg))
-                    {
-                        mWritingData = true;
-                        mWriteResponseTimer.reset();
-                        mWriteResponseTimer.start();
-
-                        mWriteBuffer = msg;
-                        asio::async_write(mImpl->mSocket,
-                                          asio::buffer(mWriteBuffer.data()),
-                                          asio::transfer_exactly(mWriteBuffer.size()),
-                                          [this](const asio::error_code& errorCode, std::size_t bytes_transferred)
-                        {
-                            // not writing data anymore
-                            mWritingData = false;
-
-                            // handle error
-                            handleError(errorCode);
-
-                            // stop response timer
-                            mWriteResponseTimer.reset(); //stop();
-                        });
-                    }
-                }
-				else
-                {
-                    if(mWriteResponseTimer.getMillis().count() > mWriteTimeOutMillis)
-                    {
-                        // stop response timer
-                        mWriteResponseTimer.reset(); //stop();
-
-                        // not writing data
-                        mWritingData = false;
-
-                        // socket is not ready
-                        mSocketReady.store(false);
-
-                        // timeout occured
-                        // log error to console
-                        logError("Write timeout occured!");
-
-                        // close socket
-                        asio::error_code error_code;
-						mImpl->mSocket.close(error_code);
-                        if(error_code)
-                        {
-                            logError(error_code.message());
-                        }
-
-                        // if auto reconnect is enabled start the reconnection timer
-                        if(mEnableAutoReconnect)
-                        {
-                            mReconnectTimer.reset();
-                            mReconnectTimer.start();
-                        }
-                    }
-                }
-
-                if(!mReceivingData)
-                {
-                    // get available bytes to read
-                    size_t available = mImpl->mSocket.available(err);
-
-                    // bail on error
-                    if (handleError(err))
-                        return;
-
-                    if(available>0)
-                    {
-                        mReceivingData = true;
-                        mReadResponseTimer.reset();
-                        mReadResponseTimer.start();
-
-                        // receive incoming messages
-                        asio::async_read(mImpl->mSocket,
-										 mImpl->mStreamBuffer,
-                                         asio::transfer_exactly(available),
-                                         [this](const asio::error_code& errorCode, std::size_t bytes_transferred)
-                        {
-                            // not receiving any data
-                            mReceivingData = false;
-
-                            // stop timer
-                            mReadResponseTimer.reset(); //stop();
-
-                            // Read the data received
-                            auto data = mImpl->mStreamBuffer.data();
-
-                            // Consume it after
-							mImpl->mStreamBuffer.consume(bytes_transferred);
-
-                            if(!handleError(errorCode))
-                            {
-                                // dispatch any received messages
-                                std::string data_string;
-                                if(bytes_transferred>0)
-                                {
-                                    data_string += std::string(asio::buffers_begin(data), asio::buffers_end(data));
-
-                                    if(!data_string.empty())
-                                    {
-                                        dataReceived.trigger(data_string);
-                                    }
-                                }
-                            }
-                        });
-                    }
-                }else
-                {
-                    if(mReadResponseTimer.getMillis().count() > mReadTimeOutMillis)
-                    {
-                        // stop read response timer
-                        mReadResponseTimer.reset(); //stop();
-
-                        // stop sending data
-                        mReceivingData = false;
-
-                        // socket is not ready
-                        mSocketReady.store(false);
-
-                        // timeout occured
-                        // log error to console
-                        logError("Read timeout occured!");
-
-                        // close socket
-                        asio::error_code error_code;
-						mImpl->mSocket.close(error_code);
-                        if(error_code)
-                        {
-                            logError(error_code.message());
-                        }
-
-                        // if auto reconnect is enabled start the reconnection timer
-                        if(mEnableAutoReconnect)
-                        {
-                            mReconnectTimer.reset();
-                            mReconnectTimer.start();
-                        }
-                    }
-                }
-            }else
-            {
-                // log
-                logInfo("Socket disconnected");
-
-                // socket is not ready
-                mSocketReady.store(false);
-
-                // shutdown active socket
-                asio::error_code err;
-				mImpl->mSocket.shutdown(asio::socket_base::shutdown_both, err);
-                if (err)
-                {
-                    logError(err.message());
-                }
-
-                // if auto reconnect is enabled start the reconnection time
-                if(mEnableAutoReconnect)
-                {
-                    mReconnectTimer.reset();
-                }
-
-                // trigger disconnected signal
-                disconnected.trigger();
-            }
-        }else
-        {
-            // check if we need to reconnect the socket
-            if(mEnableAutoReconnect && !mConnecting.load())
-            {
-                if(mReconnectTimer.getMillis().count() > mAutoReconnectIntervalMillis)
-                {
-                    connect();
-                }
-            }
-        }
-
-        if(mConnecting.load())
-        {
-            if(mTimeoutTimer.getMillis().count() > mConnectTimeOutMillis)
-            {
-                mConnecting.store(false);
-
-                asio::error_code error_code;
-                mTimeoutTimer.reset();
-                mTimeoutTimer.reset(); //stop();
-
-                // log error to console
-                logError("Connect timeout occured!");
-
-                // close socket
-				mImpl->mSocket.close(error_code);
-                if(error_code)
-                {
-                    logError(error_code.message());
-                }
-
-                // if auto reconnect is enabled start the reconnection timer
-                if(mEnableAutoReconnect)
-                {
-                    mReconnectTimer.reset();
-                    mReconnectTimer.start();
-                }
-            }
-        }
-
-        postProcessSignal.trigger();
-	}
+//	void SocketClient::onProcess()
+//	{
+//        std::function<void()> action;
+//        while(mActionQueue.try_dequeue(action))
+//        {
+//            action();
+//        }
+//
+//        if (mSocketReady.load())
+//        {
+//            if(mImpl->mSocket.is_open())
+//            {
+//                // error code
+//                asio::error_code err;
+//
+//                // let the socket send queued messages
+//				SocketPacket msg;
+//                if(!mWritingData)
+//                {
+//                    if (mQueue.try_dequeue(msg))
+//                    {
+//                        mWritingData = true;
+//                        mWriteResponseTimer.reset();
+//                        mWriteResponseTimer.start();
+//
+//                        mWriteBuffer = msg;
+//                        asio::async_write(mImpl->mSocket,
+//                                          asio::buffer(mWriteBuffer.data()),
+//                                          asio::transfer_exactly(mWriteBuffer.size()),
+//                                          [this](const asio::error_code& errorCode, std::size_t bytes_transferred)
+//                        {
+//                            // not writing data anymore
+//                            mWritingData = false;
+//
+//                            // handle error
+//                            handleError(errorCode);
+//
+//                            // stop response timer
+//                            mWriteResponseTimer.reset(); //stop();
+//                        });
+//                    }
+//                }
+//				else
+//                {
+//                    if(mWriteResponseTimer.getMillis().count() > mWriteTimeOutMillis)
+//                    {
+//                        // stop response timer
+//                        mWriteResponseTimer.reset(); //stop();
+//
+//                        // not writing data
+//                        mWritingData = false;
+//
+//                        // socket is not ready
+//                        mSocketReady.store(false);
+//
+//                        // timeout occured
+//                        // log error to console
+//                        logError("Write timeout occured!");
+//
+//                        // close socket
+//                        asio::error_code error_code;
+//						mImpl->mSocket.close(error_code);
+//                        if(error_code)
+//                        {
+//                            logError(error_code.message());
+//                        }
+//
+//                        // if auto reconnect is enabled start the reconnection timer
+//                        if(mEnableAutoReconnect)
+//                        {
+//                            mReconnectTimer.reset();
+//                            mReconnectTimer.start();
+//                        }
+//                    }
+//                }
+//
+//                if(!mReceivingData)
+//                {
+//                    // get available bytes to read
+//                    size_t available = mImpl->mSocket.available(err);
+//
+//                    // bail on error
+//                    if (handleError(err))
+//                        return;
+//
+//                    if(available>0)
+//                    {
+//                        mReceivingData = true;
+//                        mReadResponseTimer.reset();
+//                        mReadResponseTimer.start();
+//
+//                        // receive incoming messages
+//                        asio::async_read(mImpl->mSocket,
+//										 mImpl->mStreamBuffer,
+//                                         asio::transfer_exactly(available),
+//                                         [this](const asio::error_code& errorCode, std::size_t bytes_transferred)
+//                        {
+//                            // not receiving any data
+//                            mReceivingData = false;
+//
+//                            // stop timer
+//                            mReadResponseTimer.reset(); //stop();
+//
+//                            // Read the data received
+//                            auto data = mImpl->mStreamBuffer.data();
+//
+//                            // Consume it after
+//							mImpl->mStreamBuffer.consume(bytes_transferred);
+//
+//                            if(!handleError(errorCode))
+//                            {
+//                                // dispatch any received messages
+//                                std::string data_string;
+//                                if(bytes_transferred>0)
+//                                {
+//                                    data_string += std::string(asio::buffers_begin(data), asio::buffers_end(data));
+//
+//                                    if(!data_string.empty())
+//                                    {
+//                                        dataReceived.trigger(data_string);
+//                                    }
+//                                }
+//                            }
+//                        });
+//                    }
+//                }else
+//                {
+//                    if(mReadResponseTimer.getMillis().count() > mReadTimeOutMillis)
+//                    {
+//                        // stop read response timer
+//                        mReadResponseTimer.reset(); //stop();
+//
+//                        // stop sending data
+//                        mReceivingData = false;
+//
+//                        // socket is not ready
+//                        mSocketReady.store(false);
+//
+//                        // timeout occured
+//                        // log error to console
+//                        logError("Read timeout occured!");
+//
+//                        // close socket
+//                        asio::error_code error_code;
+//						mImpl->mSocket.close(error_code);
+//                        if(error_code)
+//                        {
+//                            logError(error_code.message());
+//                        }
+//
+//                        // if auto reconnect is enabled start the reconnection timer
+//                        if(mEnableAutoReconnect)
+//                        {
+//                            mReconnectTimer.reset();
+//                            mReconnectTimer.start();
+//                        }
+//                    }
+//                }
+//            }else
+//            {
+//                // log
+//                logInfo("Socket disconnected");
+//
+//                // socket is not ready
+//                mSocketReady.store(false);
+//
+//                // shutdown active socket
+//                asio::error_code err;
+//				mImpl->mSocket.shutdown(asio::socket_base::shutdown_both, err);
+//                if (err)
+//                {
+//                    logError(err.message());
+//                }
+//
+//                // if auto reconnect is enabled start the reconnection time
+//                if(mEnableAutoReconnect)
+//                {
+//                    mReconnectTimer.reset();
+//                }
+//
+//                // trigger disconnected signal
+//                disconnected.trigger();
+//            }
+//        }else
+//        {
+//            // check if we need to reconnect the socket
+//            if(mEnableAutoReconnect && !mConnecting.load())
+//            {
+//                if(mReconnectTimer.getMillis().count() > mAutoReconnectIntervalMillis)
+//                {
+//                    connect();
+//                }
+//            }
+//        }
+//
+//        if(mConnecting.load())
+//        {
+//            if(mTimeoutTimer.getMillis().count() > mConnectTimeOutMillis)
+//            {
+//                mConnecting.store(false);
+//
+//                asio::error_code error_code;
+//                mTimeoutTimer.reset();
+//                mTimeoutTimer.reset(); //stop();
+//
+//                // log error to console
+//                logError("Connect timeout occured!");
+//
+//                // close socket
+//				mImpl->mSocket.close(error_code);
+//                if(error_code)
+//                {
+//                    logError(error_code.message());
+//                }
+//
+//                // if auto reconnect is enabled start the reconnection timer
+//                if(mEnableAutoReconnect)
+//                {
+//                    mReconnectTimer.reset();
+//                    mReconnectTimer.start();
+//                }
+//            }
+//        }
+//
+//        postProcessSignal.trigger();
+//	}
 
 
     void SocketClient::clearQueue()
