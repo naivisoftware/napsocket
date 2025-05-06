@@ -72,7 +72,8 @@ namespace nap
 		void enqueue(SocketPacket&& packet);
 
 		// Called from asio execution thread
-		void write(const SocketPacket& packet);
+		void writeHeader();
+		void writeBody();
 
 		void readHeader();
 		void readBody();
@@ -97,7 +98,8 @@ namespace nap
 
 		// Async objects -> accessed from socket execution context
 		asio::streambuf mRespBuffer;					//< Response buffer
-		std::unique_ptr<asio::steady_timer> mTimeout;	//< Timeout connection timer
+		std::unique_ptr<asio::steady_timer> mTimer;		//< Timeout connection timer
+		double mTimeOut = 5.0;							//< Connection timeout in seconds
 
 		std::atomic<bool> mIsConnected{false};
 

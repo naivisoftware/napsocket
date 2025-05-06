@@ -43,7 +43,7 @@ namespace nap
 				}
 
 				// Connection success
-				nap::Logger::debug("%s: connected", getEndPoint().c_str());
+				nap::Logger::debug("%s: Connection established", getEndPoint().c_str());
 
 				// Notify socket connected
 				mAdapter.onSocketConnected(getID());
@@ -51,7 +51,7 @@ namespace nap
 				// Write enqueued cmd
 				setTimer();
 				if (!mOutQueue.empty())
-					write(mOutQueue.front());
+					writeHeader();
 
 				// Start reading callback
 				readHeader();
@@ -83,7 +83,7 @@ namespace nap
 				bool is_empty = mOutQueue.empty();
 				mOutQueue.emplace_back(pack);
 				if (is_empty)
-					write(mOutQueue.front());
+					writeHeader();
 			}
 		);
 	}
@@ -96,34 +96,46 @@ namespace nap
 			   bool is_empty = mOutQueue.empty();
 			   mOutQueue.emplace_back(pack);
 			   if (is_empty)
-				   write(mOutQueue.front());
+				   writeHeader();
 			}
 		);
 	}
 
 
-	void SocketConnection::write(const SocketPacket& packet)
+	void SocketConnection::writeHeader()
 	{
-		if (!mSocket.is_open())
-		{
-			nap::Logger::error("%s: socket closed", getEndPoint().c_str());
-			return;
-		}
-
-		auto write_buffer = asio::buffer(packet.data(), packet.size());
-		asio::async_write(mSocket, write_buffer, [this](std::error_code ec, std::size_t size)
+		assert(mSocket.is_open());
+		asio::async_write(mSocket, asio::buffer(&mOutQueue.front().mHeader, sizeof(mOutQueue.front().mHeader)), [this](std::error_code ec, std::size_t size)
 			{
 				// Writing failed
 				if (ec)
 				{
-					nap::Logger::error("%s: %s", getEndPoint().c_str(), ec.message().c_str());
+					nap::Logger::error("%s: Failed to write header | %s", getEndPoint().c_str(), ec.message().c_str());
 					close();
 					return;
 				}
+				// Keep writing packet body
+				writeBody();
+			}
+		);
+	}
 
-				// Writing succeeded -> schedule a response read before attempting a new write
-				nap::Logger::debug("%s: Written %d byte(s)", getEndPoint().c_str(), size);
+
+	void SocketConnection::writeBody()
+	{
+		assert(mSocket.is_open());
+		asio::async_write(mSocket, asio::buffer(mOutQueue.front().mBuffer.data(), mOutQueue.front().mBuffer.size()), [this](std::error_code ec, std::size_t size)
+			{
+				// Writing failed
+				if (ec)
+				{
+					nap::Logger::error("%s: Failed to write body | %s", getEndPoint().c_str(), ec.message().c_str());
+					close();
+					return;
+				}
 				mOutQueue.pop_front();
+				if (!mOutQueue.empty())
+					writeHeader();
 			}
 		);
 	}
@@ -155,7 +167,7 @@ namespace nap
 				// Resize message body
 				mIncomingMsgBuffer.mBuffer.resize(mIncomingMsgBuffer.mHeader.mSize);
 
-				// Keep reading body
+				// Proceed to reading packet body
 				readBody();
 			}
 		);
@@ -177,7 +189,7 @@ namespace nap
 				// Pass to packet received
 				mAdapter.onPacketReceived(getID(), mIncomingMsgBuffer);
 
-				// Keep reading new header
+				// Proceed reading new packet header
 				readHeader();
 			}
 		);
@@ -187,20 +199,22 @@ namespace nap
 	void SocketConnection::close()
 	{
 		// Delete timer -> bail if closed
-		mTimeout.reset();
+		mTimer.reset();
 
 		// Close -> must be open when called deferred
 		if (!mSocket.is_open())
 			return;
 
+		// Attempt to shut down the socket. On error, try closing anyway
 		std::error_code shutdown_err;
 		if (mSocket.shutdown(asio::socket_base::shutdown_both, shutdown_err))
-			nap::Logger::error("%s: %s", getEndPoint().c_str(), shutdown_err.message().c_str());
+			nap::Logger::error("%s: Failed to shutdown socket | %s", getEndPoint().c_str(), shutdown_err.message().c_str());
 
+		// Attempt to close the socket
 		std::error_code close_err;
 		if (mSocket.close(close_err))
 		{
-			nap::Logger::error("%s: %s", getEndPoint().c_str(), close_err.message().c_str());
+			nap::Logger::error("%s: Failed to close socket | %s", getEndPoint().c_str(), close_err.message().c_str());
 			return;
 		}
 
@@ -225,8 +239,8 @@ namespace nap
 
 	void SocketConnection::setTimer()
 	{
-		mTimeout = std::make_unique<asio::steady_timer>(mSocket.get_executor(), nap::Seconds(5));
-		mTimeout->async_wait(
+		mTimer = std::make_unique<asio::steady_timer>(mSocket.get_executor(), nap::Milliseconds(static_cast<uint64>(mTimeOut*1000.0)));
+		mTimer->async_wait(
 			std::bind(&SocketConnection::timeout, shared_from_this(), std::placeholders::_1)
 		);
 	}
