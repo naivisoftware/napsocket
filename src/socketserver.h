@@ -80,6 +80,7 @@ namespace nap
 		int mPort = 13251;				///< Property: 'Port' the port the server socket binds to
 		std::string mIPAddress;			///< Property: 'IP Address' local ip address to bind to, if left empty will bind to any local address
 		uint mMaxConnections = 4;		///< Property: 'MaxConnections' the maximum number of clients that can be connected at one time
+		uint mMaxMessageSize = 1 << 20;	///< Property: 'MaxMessageSize' the maximum size of messages in bytes
 		bool mEnableLog = false;        ///< Property: 'Enable Log' whether the server should log to the console
 
 	protected:
@@ -101,14 +102,6 @@ namespace nap
 		virtual void process() override;
 
     private:
-        /**
-         * Called when an error occurs in process(), closes socket with given id
-         * @param id the id of the socket that generates the error
-         * @param errorCode the errorcode
-         * @return whether an error is handled, if errorCode is empty, will return false
-         */
-        bool handleProcessError(const socket::ID& id, asio::error_code& errorCode);
-
         /**
          * Log an error to the console
          * @param message the message to log

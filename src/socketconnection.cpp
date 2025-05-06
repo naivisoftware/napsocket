@@ -27,7 +27,7 @@ namespace nap
 
 	SocketConnection::~SocketConnection()
 	{
-		nap::Logger::info("%s: Connection destroyed", getEndPoint().c_str());
+		nap::Logger::debug("%s: Connection destroyed", getEndPoint().c_str());
 	}
 
 
@@ -156,7 +156,7 @@ namespace nap
 				// Ensure there is a valid message body to read
 				if (mIncomingMsgBuffer.mHeader.mSize == 0 || mIncomingMsgBuffer.mHeader.mSize > mMaxMessageSize)
 				{
-					nap::Logger::error("%s: Invalid packet header | size %u", getEndPoint().c_str(), mIncomingMsgBuffer.mHeader.mSize);
+					nap::Logger::error("%s: Invalid packet header | %u bytes", getEndPoint().c_str(), mIncomingMsgBuffer.mHeader.mSize);
 					readHeader();
 					return;
 				}
@@ -172,7 +172,7 @@ namespace nap
 			}
 		);
 	}
-
+\
 
 	void SocketConnection::readBody()
 	{

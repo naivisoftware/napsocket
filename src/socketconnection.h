@@ -62,12 +62,23 @@ namespace nap
 		 */
 		const std::string& getEndPoint() const { return mEndpointText; }
 
+		/**
+		 * Set the maximum message size in bytes.
+		 * Call before posting work to the context.
+		 */
+		void setMaxMessageSize(uint32 size) { mMaxMessageSize = size; }
+
+		/**
+		 * Set the connection timeout in seconds.
+		 * Call before posting work to the context.
+		 */
+		void setTimeOut(double timeout) { mTimeOut = timeout; }
+
 	private:
 		// Called from client thread
 		std::future<bool> connect();
 		std::future<void> disconnect();
 
-		// Enqueue packets
 		void enqueue(const SocketPacket& packet);
 		void enqueue(SocketPacket&& packet);
 
@@ -83,13 +94,12 @@ namespace nap
 		void timeout(const std::error_code& ec);
 		void setTimer();
 
-		asio::io_context&			mContext;			//< ASIO context
 		socket::ID					mID;				//< Socket ID
+		SocketAdapter& 				mAdapter;			//< Connection owner
+		asio::io_context&			mContext;			//< ASIO context
 		asio::ip::tcp::socket		mSocket;			//< Communication socket
 		asio::ip::tcp::endpoint 	mEndpoint;			//< Endpoint description
 		std::string					mEndpointText;		//< Cached endpoint text for quick lookup
-
-		SocketAdapter& mAdapter;						//< Connection owner
 
 		// Message queues
 		std::deque<SocketPacket> mOutQueue;
@@ -99,11 +109,10 @@ namespace nap
 		// Async objects -> accessed from socket execution context
 		asio::streambuf mRespBuffer;					//< Response buffer
 		std::unique_ptr<asio::steady_timer> mTimer;		//< Timeout connection timer
+
+		uint mMaxMessageSize = 1 << 20;					//< Maximum message size in bytes
 		double mTimeOut = 5.0;							//< Connection timeout in seconds
 
 		std::atomic<bool> mIsConnected{false};
-
-		// Misc
-		const size_t mMaxMessageSize = 1<<20;
 	};
 }

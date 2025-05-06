@@ -4,24 +4,25 @@
 #include "socketserver.h"
 #include "socketservice.h"
 
-// External includes
+// ASIO includes
 #include <asio/ts/buffer.hpp>
 #include <asio/ts/internet.hpp>
 #include <asio/io_service.hpp>
 #include <asio/system_error.hpp>
 #include <asio/streambuf.hpp>
-#include <nap/logger.h>
-#include <nap/assert.h>
 
+// External includes
+#include <nap/logger.h>
 #include <thread>
 #include <mathutils.h>
 
 RTTI_BEGIN_CLASS_NO_DEFAULT_CONSTRUCTOR(nap::SocketServer)
 RTTI_CONSTRUCTOR(nap::SocketService&)
-	RTTI_PROPERTY("Port",			&nap::SocketServer::mPort,				nap::rtti::EPropertyMetaData::Default)
-	RTTI_PROPERTY("IPAddress",		&nap::SocketServer::mIPAddress,	    	nap::rtti::EPropertyMetaData::Default)
-	RTTI_PROPERTY("MaxConnections",	&nap::SocketServer::mMaxConnections,	nap::rtti::EPropertyMetaData::Default)
-	RTTI_PROPERTY("EnableLog",		&nap::SocketServer::mEnableLog,	    	nap::rtti::EPropertyMetaData::Default)
+	RTTI_PROPERTY("Port",				&nap::SocketServer::mPort,				nap::rtti::EPropertyMetaData::Default)
+	RTTI_PROPERTY("IPAddress",			&nap::SocketServer::mIPAddress,	    	nap::rtti::EPropertyMetaData::Default)
+	RTTI_PROPERTY("MaxConnections",		&nap::SocketServer::mMaxConnections,	nap::rtti::EPropertyMetaData::Default)
+	RTTI_PROPERTY("MaxMessageSize",		&nap::SocketServer::mMaxMessageSize,	nap::rtti::EPropertyMetaData::Default)
+	RTTI_PROPERTY("EnableLog",			&nap::SocketServer::mEnableLog,	    	nap::rtti::EPropertyMetaData::Default)
 RTTI_END_CLASS
 
 namespace nap
@@ -142,30 +143,6 @@ namespace nap
 	}
 
 
-    bool SocketServer::handleProcessError(const socket::ID& id, asio::error_code& errorCode)
-    {
-		// On error, close socket and re-attach acceptor callback
-		bool is_error = errorCode.operator bool();
-		if (!is_error)
-			return false;
-
-		// Log any errors or info
-		logError(errorCode.message());
-		logError("Socket disconnected");
-
-		{
-			std::lock_guard lock(mConnectionsMutex);
-
-			// Close the socket
-			auto it = mConnections.find(id); assert(it != mConnections.end());
-			it->second->close();
-
-			socketDisconnected.trigger(it->first);
-		}
-		return true;
-    }
-
-
     void SocketServer::acceptNewSocket()
 	{
 		// Abort if the ASIO resources have been discarded
@@ -183,12 +160,15 @@ namespace nap
 				return;
 			}
 
-			// Set no delay
-			if (socket.set_option(asio::ip::tcp::no_delay(mNoDelay), ec))
+			if (mNoDelay)
 			{
-				logError(ec.message());
-				acceptNewSocket();
-				return;
+				// Set no delay
+				if (socket.set_option(asio::ip::tcp::no_delay(mNoDelay), ec))
+				{
+					logError(ec.message());
+					acceptNewSocket();
+					return;
+				}
 			}
 
 			// Create a new connection to handle this client
@@ -215,13 +195,16 @@ namespace nap
 				// Create socket connection
 				auto conn = std::make_shared<SocketConnection>(mPool->getContext(), std::move(socket), *this, math::generateUUID());
 
+				// Configure connection
+				conn->setMaxMessageSize(mMaxMessageSize);
+
 				// Manage a reference to the connection
 				const auto result = mConnections.emplace(conn->getID(), std::move(conn));
 				assert(result.second);
 
 				logInfo(utility::stringFormat("Socket accepted | %s", result.first->second->getEndPoint().c_str()));
 
-				// Start reading
+				// Start reading, posts work to the ASIO context
 				result.first->second->readHeader();
 
 				// Dispatch signal
