@@ -33,7 +33,7 @@ namespace nap
 		friend class SocketAdapter;
 	public:
 		// Constructor
-		SocketConnection(asio::io_context& context, asio::ip::tcp::socket&& socket, SocketAdapter& adapter, const socket::ID& id);
+		SocketConnection(asio::io_context& context, asio::ip::tcp::socket&& socket, SocketAdapter& adapter, const SocketID& id);
 
 		// Destructor
 		~SocketConnection();
@@ -55,7 +55,7 @@ namespace nap
 		/**
 		 * @return the connection id
 		 */
-		const socket::ID& getID() const { return mID; }
+		const SocketID& getID() const { return mID; }
 
 		/**
 		 * @return the ip address
@@ -94,7 +94,7 @@ namespace nap
 		void timeout(const std::error_code& ec);
 		void setTimer();
 
-		socket::ID					mID;				//< Socket ID
+		SocketID					mID;				//< Socket ID
 		SocketAdapter& 				mAdapter;			//< Connection owner
 		asio::io_context&			mContext;			//< ASIO context
 		asio::ip::tcp::socket		mSocket;			//< Communication socket

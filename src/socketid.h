@@ -5,7 +5,7 @@
 #pragma once
 #include <string>
 
-namespace nap::socket
+namespace nap
 {
-	using ID = std::string;
+	using SocketID = std::string;
 }

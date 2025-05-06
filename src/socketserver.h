@@ -50,32 +50,32 @@ namespace nap
          * @param id client id
          * @param message the message
          */
-        void send(const socket::ID& id, const SocketPacket& message);
+        void send(const SocketID& id, const SocketPacket& message);
 
 		/**
 		 * Send message to specific socket
 		 * @param id client id
 		 * @param message the message
 		 */
-		void send(const socket::ID& id, SocketPacket&& message);
+		void send(const SocketID& id, SocketPacket&& message);
 
         /**
          * Packet received signal will be dispatched on the thread this SocketAdapter is registered to, see SocketPool
          * First argument is id, second is received message
          */
-        Signal<const socket::ID&, const SocketPacket&> packetReceived;
+        Signal<const SocketID&, const SocketPacket&> packetReceived;
 
         /**
          * Socket connected signal, will be dispatched on the thread this SocketAdapter is registered to, see SocketPool
          * Argument is id of socket connected
          */
-        Signal<const socket::ID&> socketConnected;
+        Signal<const SocketID&> socketConnected;
 
         /**
          * Socket disconnected signal, will be dispatched on the thread this SocketAdapter is registered to, see SocketPool
          * Argument is id of socket disconnected
          */
-        Signal<const socket::ID&> socketDisconnected;
+        Signal<const SocketID&> socketDisconnected;
 
 		int mPort = 13251;				///< Property: 'Port' the port the server socket binds to
 		std::string mIPAddress;			///< Property: 'IP Address' local ip address to bind to, if left empty will bind to any local address
@@ -124,20 +124,20 @@ namespace nap
 		 * @param id
 		 * @param packet
 		 */
-		virtual void onPacketReceived(const socket::ID& id, const SocketPacket& packet) override;
+		virtual void onPacketReceived(const SocketID& id, const SocketPacket& packet) override;
 
 		/**
 		 *
 		 * @param id
 		 */
-		virtual void onSocketDisconnected(const socket::ID& id) override;
+		virtual void onSocketDisconnected(const SocketID& id) override;
 
 		// Server specific ASIO resources
 		class Impl;
 		std::unique_ptr<Impl> mImpl;
 
 		// Connections
-		std::unordered_map<socket::ID, std::shared_ptr<SocketConnection>> mConnections;
+		std::unordered_map<SocketID, std::shared_ptr<SocketConnection>> mConnections;
 
         // Threading
 		std::mutex mConnectionsMutex;

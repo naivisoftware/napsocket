@@ -72,9 +72,9 @@ namespace nap
         bool handleAsioError(const asio::error_code& errorCode, utility::ErrorState& errorState);
 
 		// Events
-		virtual void onPacketReceived(const socket::ID& id, const SocketPacket& packet) {};
-		virtual void onSocketConnected(const socket::ID& id) {};
-		virtual void onSocketDisconnected(const socket::ID& id) {};
+		virtual void onPacketReceived(const SocketID& id, const SocketPacket& packet) {};
+		virtual void onSocketConnected(const SocketID& id) {};
+		virtual void onSocketDisconnected(const SocketID& id) {};
 
 	private:
 		SocketService& mService;

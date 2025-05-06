@@ -117,7 +117,7 @@ namespace nap
 	}
 
 
-    void SocketServer::send(const socket::ID& id, const SocketPacket& message)
+    void SocketServer::send(const SocketID& id, const SocketPacket& message)
     {
 		std::lock_guard lock(mConnectionsMutex);
         auto it = mConnections.find(id);
@@ -130,7 +130,7 @@ namespace nap
 	}
 
 
-	void SocketServer::send(const socket::ID& id, SocketPacket&& message)
+	void SocketServer::send(const SocketID& id, SocketPacket&& message)
 	{
 		std::lock_guard lock(mConnectionsMutex);
 		auto it = mConnections.find(id);
@@ -217,13 +217,13 @@ namespace nap
     }
 
 
-	void SocketServer::onPacketReceived(const socket::ID& id, const SocketPacket& packet)
+	void SocketServer::onPacketReceived(const SocketID& id, const SocketPacket& packet)
 	{
 		packetReceived(id, packet);
 	}
 
 
-	void SocketServer::onSocketDisconnected(const socket::ID& id)
+	void SocketServer::onSocketDisconnected(const SocketID& id)
 	{
 		std::lock_guard lock(mConnectionsMutex);
 		auto it = mConnections.find(id);

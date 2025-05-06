@@ -15,7 +15,7 @@
 
 namespace nap
 {
-	SocketConnection::SocketConnection(asio::io_context& context, asio::ip::tcp::socket&& socket, SocketAdapter& adapter, const socket::ID& id) :
+	SocketConnection::SocketConnection(asio::io_context& context, asio::ip::tcp::socket&& socket, SocketAdapter& adapter, const SocketID& id) :
 		mContext(context),
 		mSocket(std::move(socket)),
 		mEndpoint(mSocket.remote_endpoint()),
