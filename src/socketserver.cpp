@@ -18,9 +18,10 @@
 
 RTTI_BEGIN_CLASS_NO_DEFAULT_CONSTRUCTOR(nap::SocketServer)
 RTTI_CONSTRUCTOR(nap::SocketService&)
-	RTTI_PROPERTY("Port",			&nap::SocketServer::mPort,			nap::rtti::EPropertyMetaData::Default)
-	RTTI_PROPERTY("IPAddress",		&nap::SocketServer::mIPAddress,	    nap::rtti::EPropertyMetaData::Default)
-	RTTI_PROPERTY("EnableLog",		&nap::SocketServer::mEnableLog,	    nap::rtti::EPropertyMetaData::Default)
+	RTTI_PROPERTY("Port",			&nap::SocketServer::mPort,				nap::rtti::EPropertyMetaData::Default)
+	RTTI_PROPERTY("IPAddress",		&nap::SocketServer::mIPAddress,	    	nap::rtti::EPropertyMetaData::Default)
+	RTTI_PROPERTY("MaxConnections",	&nap::SocketServer::mMaxConnections,	nap::rtti::EPropertyMetaData::Default)
+	RTTI_PROPERTY("EnableLog",		&nap::SocketServer::mEnableLog,	    	nap::rtti::EPropertyMetaData::Default)
 RTTI_END_CLASS
 
 namespace nap
@@ -71,7 +72,8 @@ namespace nap
 		mImpl = std::make_unique<SocketServer::Impl>(mPool->getContext(), address, mPort);
 
         // Async accept new sockets
-        acceptNewSocket();
+		if (mMaxConnections > 0)
+			acceptNewSocket();
 
         return true;
     }
@@ -191,8 +193,27 @@ namespace nap
 
 			// Create a new connection to handle this client
 			{
-				auto conn = std::make_shared<SocketConnection>(mPool->getContext(), std::move(socket), *this, math::generateUUID());
 				std::lock_guard lock(mConnectionsMutex);
+
+				// Deny connection when capacity is reached
+				if (mConnections.size() >= mMaxConnections)
+				{
+					logInfo(utility::stringFormat("Socket denied. Max connections reached"));
+
+					asio::error_code shutdown_err;
+					if (socket.shutdown(asio::socket_base::shutdown_both, shutdown_err))
+						logError(shutdown_err.message());
+
+					asio::error_code close_err;
+					if (socket.close(close_err))
+						logError(close_err.message());
+
+					acceptNewSocket();
+					return;
+				}
+
+				// Create socket connection
+				auto conn = std::make_shared<SocketConnection>(mPool->getContext(), std::move(socket), *this, math::generateUUID());
 
 				// Manage a reference to the connection
 				const auto result = mConnections.emplace(conn->getID(), std::move(conn));
@@ -224,8 +245,6 @@ namespace nap
 		std::lock_guard lock(mConnectionsMutex);
 		auto it = mConnections.find(id);
 		assert(it != mConnections.end());
-
-		// TODO: test this
 		mConnections.erase(it);
 	}
 

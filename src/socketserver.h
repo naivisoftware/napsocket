@@ -79,6 +79,7 @@ namespace nap
 
 		int mPort = 13251;				///< Property: 'Port' the port the server socket binds to
 		std::string mIPAddress;			///< Property: 'IP Address' local ip address to bind to, if left empty will bind to any local address
+		uint mMaxConnections = 4;		///< Property: 'MaxConnections' the maximum number of clients that can be connected at one time
 		bool mEnableLog = false;        ///< Property: 'Enable Log' whether the server should log to the console
 
 	protected:

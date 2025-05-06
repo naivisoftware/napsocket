@@ -9,10 +9,12 @@
 #include "socketpacket.h"
 #include "socketid.h"
 
-// External includes
+// ASIO Includes
 #include <asio/ip/tcp.hpp>
 #include <asio/streambuf.hpp>
 #include <asio/steady_timer.hpp>
+
+// External includes
 #include <utility/dllexport.h>
 #include <nap/timer.h>
 #include <concurrentqueue.h>

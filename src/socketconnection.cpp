@@ -27,7 +27,7 @@ namespace nap
 
 	SocketConnection::~SocketConnection()
 	{
-		nap::Logger::info("%s: Connection destroyed", mID.c_str());
+		nap::Logger::info("%s: Connection destroyed", getEndPoint().c_str());
 	}
 
 
@@ -46,7 +46,7 @@ namespace nap
 				nap::Logger::debug("%s: connected", getEndPoint().c_str());
 
 				// Notify socket connected
-				mAdapter.onSocketConnected(this->getID());
+				mAdapter.onSocketConnected(getID());
 
 				// Write enqueued cmd
 				setTimer();
@@ -174,9 +174,6 @@ namespace nap
 					return;
 				}
 
-				// Use message queue (not sure about this)
-				// mInQueue.emplace_back(mIncomingMsgBuffer);
-
 				// Pass to packet received
 				mAdapter.onPacketReceived(getID(), mIncomingMsgBuffer);
 
@@ -190,16 +187,20 @@ namespace nap
 	void SocketConnection::close()
 	{
 		// Delete timer -> bail if closed
-		mTimeout.reset(nullptr);
+		mTimeout.reset();
 
 		// Close -> must be open when called deferred
 		if (!mSocket.is_open())
 			return;
 
-		std::error_code ec;
-		if (mSocket.close(ec))
+		std::error_code shutdown_err;
+		if (mSocket.shutdown(asio::socket_base::shutdown_both, shutdown_err))
+			nap::Logger::error("%s: %s", getEndPoint().c_str(), shutdown_err.message().c_str());
+
+		std::error_code close_err;
+		if (mSocket.close(close_err))
 		{
-			nap::Logger::error("%s: %s", getEndPoint().c_str(), ec.message().c_str());
+			nap::Logger::error("%s: %s", getEndPoint().c_str(), close_err.message().c_str());
 			return;
 		}
 
@@ -207,7 +208,7 @@ namespace nap
 		nap::Logger::debug("%s: Connection closed", getEndPoint().c_str());
 
 		// Notify connection is closed
-		mAdapter.onSocketDisconnected(this->getID());
+		mAdapter.onSocketDisconnected(getID());
 	}
 
 
