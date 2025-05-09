@@ -104,7 +104,13 @@ namespace nap
 
 	void SocketConnection::writeHeader()
 	{
-		assert(mSocket.is_open());
+		if (!mSocket.is_open())
+		{
+			nap::Logger::error("%s: Failed to write header | Socket closed", getEndPoint().c_str());
+			mAdapter.onSocketDisconnected(getID());
+			return;
+		}
+
 		asio::async_write(mSocket, asio::buffer(&mOutQueue.front().mHeader, sizeof(mOutQueue.front().mHeader)), [this](std::error_code ec, std::size_t size)
 			{
 				// Writing failed
@@ -172,7 +178,7 @@ namespace nap
 			}
 		);
 	}
-\
+
 
 	void SocketConnection::readBody()
 	{

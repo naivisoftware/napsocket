@@ -138,9 +138,11 @@ namespace nap
 
 		// Connections
 		std::unordered_map<SocketID, std::shared_ptr<SocketConnection>> mConnections;
+		std::set<SocketID> mConnectionsToRemove;
 
         // Threading
 		std::mutex mConnectionsMutex;
+		std::mutex mConnectionsToRemoveMutex;
 	};
 
 	// Object creator

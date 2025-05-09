@@ -60,6 +60,9 @@ namespace nap
 
     bool SocketServer::start(utility::ErrorState &errorState)
     {
+		if (!SocketAdapter::start(errorState))
+			return false;
+
         // Try to create ip address. When address property is left empty, bind to any local address
 		asio::error_code err_code;
 		auto address = !mIPAddress.empty() ?
@@ -82,6 +85,8 @@ namespace nap
 
     void SocketServer::stop()
     {
+		SocketAdapter::stop();
+
 		std::lock_guard lock(mConnectionsMutex);
 
         // Shutdown and close sockets
@@ -225,16 +230,21 @@ namespace nap
 
 	void SocketServer::onSocketDisconnected(const SocketID& id)
 	{
-		std::lock_guard lock(mConnectionsMutex);
-		auto it = mConnections.find(id);
-		assert(it != mConnections.end());
-		mConnections.erase(it);
+		std::lock_guard<std::mutex> lock(mConnectionsToRemoveMutex);
+		mConnectionsToRemove.emplace(id);
 	}
 
 
     void SocketServer::process()
     {
-		// TODO: see if this is useful
+		// Destroy connections safely
+		std::lock_guard<std::mutex> rm_lock(mConnectionsToRemoveMutex);
+		if (mConnectionsToRemove.empty())
+			return;
+
+		std::lock_guard<std::mutex> lock(mConnectionsMutex);
+		for (const auto& id : mConnectionsToRemove)
+			mConnections.erase(id);
     }
 
 
