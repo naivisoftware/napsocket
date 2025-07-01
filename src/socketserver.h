@@ -60,6 +60,11 @@ namespace nap
 		void send(const SocketID& id, SocketPacket&& message);
 
         /**
+         * @return the number of open connections
+         */
+        uint getConnectionCount();
+
+        /**
          * Packet received signal will be dispatched on the thread this SocketAdapter is registered to, see SocketPool
          * First argument is id, second is received message
          */

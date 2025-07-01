@@ -260,4 +260,11 @@ namespace nap
         if (mEnableLog)
         	nap::Logger::info(*this, message);
     }
+
+
+	uint SocketServer::getConnectionCount()
+	{
+		std::lock_guard lock(mConnectionsMutex);
+		return static_cast<uint>(mConnections.size());
+	}
 }
