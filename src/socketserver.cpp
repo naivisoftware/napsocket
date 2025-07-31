@@ -36,8 +36,32 @@ namespace nap
 	public:
 		Impl(asio::io_context& context, const asio::ip::address& addr, asio::ip::port_type port) :
 			mRemoteEndpoint(addr, port),
-			mAcceptor(context, mRemoteEndpoint)	//< Opens the acceptor
-		{ }
+			mAcceptor(context),
+			mContext(context) {}
+
+		// Opens the acceptor
+		bool init(utility::ErrorState& errorState)
+		{
+			asio::error_code ec;
+			mAcceptor.open(mRemoteEndpoint.protocol(), ec);
+			if (ec) {
+				errorState.fail("Failed to open acceptor: %s", ec.message().c_str());
+				return false;
+			}
+
+			mAcceptor.bind(mRemoteEndpoint, ec);
+			if (ec) {
+				errorState.fail("Failed to bind acceptor: %s", ec.message().c_str());
+				return false;
+			}
+
+			mAcceptor.listen(asio::socket_base::max_listen_connections, ec);
+			if (ec) {
+				errorState.fail("Failed to listen on acceptor: %s", ec.message().c_str());
+				return false;
+			}
+			return true;
+		}
 
 		~Impl()
 		{
@@ -46,6 +70,7 @@ namespace nap
 
 		asio::ip::tcp::endpoint mRemoteEndpoint;
 		asio::ip::tcp::acceptor	mAcceptor;
+		asio::io_context& mContext;
 	};
 
 
@@ -74,6 +99,10 @@ namespace nap
 
 		// Create asio implementation
 		mImpl = std::make_unique<SocketServer::Impl>(mPool->getContext(), address, mPort);
+
+		// Open the acceptor
+		if (!mImpl->init(errorState))
+			return false;
 
         // Async accept new sockets
 		if (mMaxConnections > 0)

@@ -81,7 +81,7 @@ namespace nap
 		/**
 		 * @return string with contents of internal buffer
 		 */
-		std::string toString() const{ return std::string(mBuffer.begin(), mBuffer.end()); }
+		std::string toString() const { return std::string(mBuffer.begin(), mBuffer.end()); }
 
 	private:
 		Header mHeader;				///< Header containing information about the message
