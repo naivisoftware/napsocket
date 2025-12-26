@@ -2,6 +2,10 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
-#include "utility/module.h"
+#pragma once
+#include <string>
 
-NAP_SERVICE_MODULE("napsocket", "0.1.0", "nap::SocketService")
+namespace nap
+{
+	using SocketID = std::string;
+}

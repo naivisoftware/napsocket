@@ -4,13 +4,11 @@
 
 // Local Includes
 #include "socketservice.h"
-#include "socketthread.h"
-
-// External includes
-#include <memory>
+#include "socketserver.h"
+#include "socketclient.h"
 
 RTTI_BEGIN_CLASS_NO_DEFAULT_CONSTRUCTOR(nap::SocketService)
-RTTI_CONSTRUCTOR(nap::ServiceConfiguration*)
+	RTTI_CONSTRUCTOR(nap::ServiceConfiguration*)
 RTTI_END_CLASS
 
 namespace nap
@@ -21,49 +19,36 @@ namespace nap
 
     SocketService::SocketService(ServiceConfiguration* configuration) :
 		Service(configuration)
+	{ }
+
+
+	void SocketService::update(double deltaTime)
 	{
+		for (auto& adapter : mAdapters)
+			adapter->process();
 	}
 
 
-	bool SocketService::init(utility::ErrorState& error)
+	void SocketService::registerSocketAdapter(SocketAdapter& adapter)
 	{
-		return true;
+		auto result = mAdapters.emplace(&adapter);
+		assert(result.second);
 	}
 
 
-	void SocketService::shutdown()
+	void SocketService::removeSocketAdapter(SocketAdapter& adapter)
 	{
+		auto found_it = std::find_if(mAdapters.begin(), mAdapters.end(), [&](const auto& it) {
+			return it == &adapter;
+		});
+		assert(found_it != mAdapters.end());
+		mAdapters.erase(found_it);
 	}
 
 
 	void SocketService::registerObjectCreators(rtti::Factory& factory)
 	{
-		factory.addObjectCreator(std::make_unique<SocketThreadObjectCreator>(*this));
-	}
-
-
-	void SocketService::update(double deltaTime)
-	{
-		for(auto* thread : mThreads)
-		{
-			thread->process();
-		}
-	}
-
-
-	void SocketService::removeSocketThread(SocketThread* thread)
-	{
-		auto found_it = std::find_if(mThreads.begin(), mThreads.end(), [&](const auto& it)
-		{
-		  return it == thread;
-		});
-		assert(found_it != mThreads.end());
-		mThreads.erase(found_it);
-	}
-
-
-	void SocketService::registerSocketThread(SocketThread* thread)
-	{
-		mThreads.emplace_back(thread);
+		factory.addObjectCreator(std::make_unique<SocketServerObjectCreator>(*this));
+		factory.addObjectCreator(std::make_unique<SocketClientObjectCreator>(*this));
 	}
 }

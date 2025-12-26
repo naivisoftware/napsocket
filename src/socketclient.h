@@ -9,13 +9,6 @@
 #include <queue>
 #include <mutex>
 
-// ASIO includes
-#include <asio/ts/buffer.hpp>
-#include <asio/ts/internet.hpp>
-#include <asio/io_service.hpp>
-#include <asio/system_error.hpp>
-#include <asio/streambuf.hpp>
-
 // NAP includes
 #include <utility/threading.h>
 #include <concurrentqueue.h>
@@ -24,38 +17,28 @@
 
 // Local includes
 #include "socketadapter.h"
+#include "socketpacket.h"
 
 namespace nap
 {
-	//////////////////////////////////////////////////////////////////////////
-
     /**
      * SocketClient creates a asio::tcp::socket and tries to connect to an endpoint.
      * Once connected it is able to send and receive data as std::strings
-     * SocketClient extends on SocketAdapter, this means the process() function will be called by the SocketThread
+     * SocketClient extends on SocketAdapter, this means the process() function will be called by the SocketPool
      * assigned to the SocketAdapter.
      */
 	class NAPAPI SocketClient final : public SocketAdapter
 	{
 		RTTI_ENABLE(SocketAdapter)
 	public:
-		/**
-		 * Initializes the Socket client
-		 * @param error contains error information
-		 * @return true on success
-		 */
-		bool init(utility::ErrorState& errorState) override;
-
-		/**
-		 * Called before destruction
-		 */
-		void onDestroy() override;
+		// Constructor
+		SocketClient(SocketService& service);
 
         /**
          * Send message to server
          * @param message the message
          */
-		void send(const std::string& message);
+		void send(const SocketPacket& message);
 
         /**
          * Connect to server
@@ -80,23 +63,17 @@ namespace nap
         bool isConnecting() const;
 
         void enableLog(bool enableLog);
-    public:
-        void addMessageReceivedSlot(Slot<const std::string&>& slot);
 
-        void removeMessageReceivedSlot(Slot<const std::string&>& slot);
-
+		// slots
+        void addMessageReceivedSlot(Slot<const SocketPacket&>& slot);
+        void removeMessageReceivedSlot(Slot<const SocketPacket&>& slot);
         void addConnectedSlot(Slot<>& slot);
-
         void removeConnectedSlot(Slot<>& slot);
-
         void addDisconnectedSlot(Slot<>& slot);
-
         void removeDisconnectedSlot(Slot<>& slot);
-
         void addPostProcessSlot(Slot<>& slot);
-
         void removePostProcessSlot(Slot<>& slot);
-	public:
+
 		// properties
 		int mPort 							= 13251; 		///< Property: 'Port' the port the client socket binds to
 		std::string mRemoteIp 				= "10.8.0.3";	///< Property: 'Endpoint' the ip address the client socket binds to
@@ -107,11 +84,25 @@ namespace nap
 	    int  mConnectTimeOutMillis          = 5000;
         int  mReadTimeOutMillis             = 200;
         int  mWriteTimeOutMillis            = 200;
+
     protected:
 		/**
-		 * The process function
+		 * Starts the Socket client and creates the socket
+		 * @param errorState contains error information
+		 * @return true on success
 		 */
-		void process() override;
+		bool start(utility::ErrorState& errorState) override final;
+
+		/**
+		 * Called when socket needs to be closed
+		 */
+		void stop() override final;
+
+		/**
+		 *
+		 */
+		virtual void process() override {};
+
     private:
         // Signals
         Signal<> postProcessSignal;
@@ -119,10 +110,10 @@ namespace nap
         /**
          * Message received signal, dispatched on thread assigned to this SocketAdapter
          */
-        Signal<const std::string&> dataReceived;
+        Signal<const SocketPacket&> dataReceived;
 
         /**
-         * Connected signal, dispatched on thread assigned to this SocketAdapter
+         * Connected signal, dispatched on thread) assigned to this SocketAdapter
          */
         Signal<> connected;
 
@@ -161,12 +152,8 @@ namespace nap
          */
         void logInfo(const std::string& message);
 
-		// ASIO
-		std::unique_ptr<asio::ip::tcp::socket> 		mSocket;
-        std::unique_ptr<asio::ip::tcp::endpoint> 	mRemoteEndpoint;
-
 		// Threading
-		moodycamel::ConcurrentQueue<std::string> 	mQueue;
+		moodycamel::ConcurrentQueue<SocketPacket> mQueue;
         std::atomic_bool mSocketReady = { false };
         std::atomic_bool mConnecting = { false };
 
@@ -180,10 +167,15 @@ namespace nap
         bool mWritingData = false;
         bool mReceivingData = false;
 
-        //
-        asio::streambuf     mStreamBuffer;
-        std::string         mWriteBuffer;
+		SocketPacket mWriteBuffer;
 
         moodycamel::ConcurrentQueue<std::function<void()>> mActionQueue;
+
+		// Client specific ASIO implementation
+		class Impl;
+		std::unique_ptr<Impl> mImpl;
 	};
+
+	// Object creator
+	using SocketClientObjectCreator = rtti::ObjectCreator<SocketClient, SocketService>;
 }

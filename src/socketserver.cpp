@@ -1,316 +1,299 @@
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
-
 #include "socketserver.h"
-#include "socketthread.h"
+#include "socketservice.h"
 
-// External includes
+// ASIO includes
 #include <asio/ts/buffer.hpp>
 #include <asio/ts/internet.hpp>
 #include <asio/io_service.hpp>
 #include <asio/system_error.hpp>
 #include <asio/streambuf.hpp>
-#include <nap/logger.h>
 
+// External includes
+#include <nap/logger.h>
 #include <thread>
 #include <mathutils.h>
 
-
-using asio::ip::address;
-using asio::ip::tcp;
-
-RTTI_BEGIN_CLASS(nap::SocketServer)
-        RTTI_PROPERTY("Port",			&nap::SocketServer::mPort,			nap::rtti::EPropertyMetaData::Default)
-        RTTI_PROPERTY("IP Address",		&nap::SocketServer::mIPAddress,	    nap::rtti::EPropertyMetaData::Default)
-        RTTI_PROPERTY("Enable Log",		&nap::SocketServer::mEnableLog,	    nap::rtti::EPropertyMetaData::Default)
+RTTI_BEGIN_CLASS_NO_DEFAULT_CONSTRUCTOR(nap::SocketServer)
+RTTI_CONSTRUCTOR(nap::SocketService&)
+	RTTI_PROPERTY("Port",				&nap::SocketServer::mPort,				nap::rtti::EPropertyMetaData::Default)
+	RTTI_PROPERTY("IPAddress",			&nap::SocketServer::mIPAddress,	    	nap::rtti::EPropertyMetaData::Default)
+	RTTI_PROPERTY("MaxConnections",		&nap::SocketServer::mMaxConnections,	nap::rtti::EPropertyMetaData::Default)
+	RTTI_PROPERTY("MaxMessageSize",		&nap::SocketServer::mMaxMessageSize,	nap::rtti::EPropertyMetaData::Default)
+	RTTI_PROPERTY("EnableLog",			&nap::SocketServer::mEnableLog,	    	nap::rtti::EPropertyMetaData::Default)
 RTTI_END_CLASS
 
 namespace nap
 {
+	//////////////////////////////////////////////////////////////////////////
+	// ASIO resources
+	//////////////////////////////////////////////////////////////////////////
+
+	class SocketServer::Impl
+	{
+	public:
+		Impl(asio::io_context& context, const asio::ip::address& addr, asio::ip::port_type port) :
+			mRemoteEndpoint(addr, port),
+			mAcceptor(context),
+			mContext(context) {}
+
+		// Opens the acceptor
+		bool init(utility::ErrorState& errorState)
+		{
+			asio::error_code ec;
+			mAcceptor.open(mRemoteEndpoint.protocol(), ec);
+			if (ec) {
+				errorState.fail("Failed to open acceptor: %s", ec.message().c_str());
+				return false;
+			}
+
+			mAcceptor.bind(mRemoteEndpoint, ec);
+			if (ec) {
+				errorState.fail("Failed to bind acceptor: %s", ec.message().c_str());
+				return false;
+			}
+
+			mAcceptor.listen(asio::socket_base::max_listen_connections, ec);
+			if (ec) {
+				errorState.fail("Failed to listen on acceptor: %s", ec.message().c_str());
+				return false;
+			}
+			return true;
+		}
+
+		~Impl()
+		{
+			mAcceptor.close();
+		}
+
+		asio::ip::tcp::endpoint mRemoteEndpoint;
+		asio::ip::tcp::acceptor	mAcceptor;
+		asio::io_context& mContext;
+	};
+
+
     //////////////////////////////////////////////////////////////////////////
     // SocketServer
     //////////////////////////////////////////////////////////////////////////
 
-    bool SocketServer::init(utility::ErrorState &errorState)
+	// Constructor
+	SocketServer::SocketServer(SocketService& service) :
+		SocketAdapter(service) {}
+
+
+    bool SocketServer::start(utility::ErrorState &errorState)
     {
-        // when asio error occurs, init_success indicates whether initialization should fail or succeed
-        bool init_success = false;
-        asio::error_code asio_error_code;
+		if (!SocketAdapter::start(errorState))
+			return false;
 
-        // try to create ip address
-        // when address property is left empty, bind to any local address
-        asio::ip::address address;
-        if (mIPAddress.empty())
-        {
-            address = asio::ip::address_v4::any();
-        } else
-        {
-            address = asio::ip::make_address(mIPAddress, asio_error_code);
-            if (handleAsioError(asio_error_code, errorState, init_success))
-                return init_success;
-        }
+        // Try to create ip address. When address property is left empty, bind to any local address
+		asio::error_code err_code;
+		auto address = !mIPAddress.empty() ?
+			asio::ip::make_address(mIPAddress, err_code) :
+			asio::ip::address_v4::any();
 
+		if (!handleAsioError(err_code, errorState))
+			return false;
 
-        // create endpoint
-        mRemoteEndpoint = std::make_unique<tcp::endpoint>(address, mPort);
+		// Create asio implementation
+		mImpl = std::make_unique<SocketServer::Impl>(mPool->getContext(), address, mPort);
 
-        // create acceptor and attach the acceptor callback
-        mAcceptor = std::make_unique<tcp::acceptor>(getIOService(), *mRemoteEndpoint.get());
+		// Open the acceptor
+		if (!mImpl->init(errorState))
+			return false;
 
-        // create new accepting socket
-        acceptNewSocket();
-
-        // init the adapter
-        if(!SocketAdapter::init(errorState))
-            return false;
+        // Async accept new sockets
+		if (mMaxConnections > 0)
+			acceptNewSocket();
 
         return true;
     }
 
 
-    void SocketServer::handleAccept(const asio::error_code& errorCode)
+    void SocketServer::stop()
     {
-        bool error = errorCode.operator bool();
-        asio::error_code error_code = errorCode;
+		SocketAdapter::stop();
 
-        if(!error)
-        {
-            // log status
-            logInfo("Socket connected");
+		std::lock_guard lock(mConnectionsMutex);
 
-            // set no delay
-            mWaitingSocket->set_option(tcp::no_delay(mNoDelay), error_code);
-            bool error = error_code.operator bool();
-            if(!error)
-            {
-                // read all available bytes, this is to make sure socket stream is empty before we start receiving new data
-                size_t available = mWaitingSocket->available();
-                asio::streambuf receivedStreamBuffer;
-                asio::streambuf::mutable_buffers_type bufs = receivedStreamBuffer.prepare(available);
-                asio::error_code err;
-                mWaitingSocket->receive(bufs, asio::socket_base::message_end_of_record, err);
-                if (err)
-                {
-                    logError(err.message());
-                }
+        // Shutdown and close sockets
+        for(auto& it : mConnections)
+            it.second->close();
 
-                // create new message queue
-                std::string socket_id = math::generateUUID();
-                mMessageQueue.emplace(socket_id, moodycamel::ConcurrentQueue<std::string>());
-                mSockets.emplace(socket_id, std::move(mWaitingSocket));
+		mConnections.clear();
 
-                // create new accepting socket
-                acceptNewSocket();
-
-                // dispatch signal
-                socketConnected.trigger(socket_id);
-            }
-        }
-
-        if(error)
-        {
-            // log error
-            logError(error_code.message());
-
-            // create new accepting socket
-            acceptNewSocket();
-        }
+		// Discard ASIO resources
+		mImpl.reset();
     }
 
 
-    void SocketServer::onDestroy()
+    void SocketServer::sendToAll(const SocketPacket& message)
     {
-        SocketAdapter::onDestroy();
-
-        // shutdown sockets
-        for(auto& pair : mSockets)
-        {
-            asio::error_code asio_error_code;
-            pair.second->shutdown(asio::socket_base::shutdown_both,asio_error_code);
-
-            // log any errors
-            if (asio_error_code)
-            {
-                logError(asio_error_code.message());
-            }
-        }
-
-        mSockets.clear();
+		std::lock_guard lock(mConnectionsMutex);
+        for(auto& it : mConnections)
+            it.second->enqueue(message);
     }
 
 
-    void SocketServer::sendToAll(const std::string &message)
+	void SocketServer::sendToAll(SocketPacket&& message)
+	{
+		std::lock_guard lock(mConnectionsMutex);
+		if (mConnections.size() == 1)
+		{
+			mConnections.begin()->second->enqueue(std::move(message));
+			return;
+		}
+
+		for(auto& it : mConnections)
+			it.second->enqueue(message);
+	}
+
+
+    void SocketServer::send(const SocketID& id, const SocketPacket& message)
     {
-        for(auto& pair : mMessageQueue)
+		std::lock_guard lock(mConnectionsMutex);
+        auto it = mConnections.find(id);
+        if(it == mConnections.end())
         {
-            pair.second.enqueue(message);
+			logError(utility::stringFormat("Cannot send message to socket, id %s not found!", id.c_str()));
+			return;
         }
-    }
+		it->second->enqueue(message);
+	}
 
 
-    void SocketServer::send(const std::string &id, const std::string &message)
-    {
-        auto itr = mMessageQueue.find(id);
-        if(itr!=mMessageQueue.end())
-        {
-            itr->second.enqueue(message);
-        }else
-        {
-            logError(utility::stringFormat("Cannot send message to socket, id %s not found!", id.c_str()));
-        }
-    }
-
-
-    bool SocketServer::handleError(const std::string& id, asio::error_code& errorCode)
-    {
-        // has an error occured, close socket and re-attach acceptor callback
-        if(errorCode)
-        {
-            // log any errors or info
-            logError(utility::stringFormat("Error occured, %s", errorCode.message().c_str()));
-            logInfo("Socket disconnected");
-
-            // close the socket
-            asio::error_code err;
-            auto itr = mSockets.find(id);
-            assert(itr!=mSockets.end());
-            itr->second->shutdown(asio::socket_base::shutdown_both, err);
-            if (err)
-            {
-                logError(err.message());
-            }
-
-            mSocketsToRemove.emplace_back(itr->first);
-            socketDisconnected.trigger(itr->first);
-
-            return true;
-        }
-
-        return false;
-    }
+	void SocketServer::send(const SocketID& id, SocketPacket&& message)
+	{
+		std::lock_guard lock(mConnectionsMutex);
+		auto it = mConnections.find(id);
+		if(it == mConnections.end())
+		{
+			logError(utility::stringFormat("Cannot send message to socket, id %s not found!", id.c_str()));
+			return;
+		}
+		it->second->enqueue(std::move(message));
+	}
 
 
     void SocketServer::acceptNewSocket()
-    {
-        // create socket
-        mWaitingSocket = std::make_unique<tcp::socket>(getIOService());
-        mAcceptor->async_accept(*mWaitingSocket, [this](const asio::error_code& errorCode)
+	{
+		// Abort if the ASIO resources have been discarded
+		if (mImpl == nullptr)
+			return;
+
+		// Accept socket asynchronously
+		mImpl->mAcceptor.async_accept([this](asio::error_code ec, asio::ip::tcp::socket socket)
         {
-            handleAccept(errorCode);
+			if (ec)
+			{
+				// Report error and accept a new socket
+				logError(ec.message());
+				acceptNewSocket();
+				return;
+			}
+
+			if (mNoDelay)
+			{
+				// Set no delay
+				if (socket.set_option(asio::ip::tcp::no_delay(mNoDelay), ec))
+				{
+					logError(ec.message());
+					acceptNewSocket();
+					return;
+				}
+			}
+
+			// Create a new connection to handle this client
+			{
+				std::lock_guard lock(mConnectionsMutex);
+
+				// Deny connection when capacity is reached
+				if (mConnections.size() >= mMaxConnections)
+				{
+					logInfo(utility::stringFormat("Socket denied. Max connections reached"));
+
+					asio::error_code shutdown_err;
+					if (socket.shutdown(asio::socket_base::shutdown_both, shutdown_err))
+						logError(shutdown_err.message());
+
+					asio::error_code close_err;
+					if (socket.close(close_err))
+						logError(close_err.message());
+
+					acceptNewSocket();
+					return;
+				}
+
+				// Create socket connection
+				auto conn = std::make_shared<SocketConnection>(mPool->getContext(), std::move(socket), *this, math::generateUUID());
+
+				// Configure connection
+				conn->setMaxMessageSize(mMaxMessageSize);
+
+				// Manage a reference to the connection
+				const auto result = mConnections.emplace(conn->getID(), std::move(conn));
+				assert(result.second);
+
+				logInfo(utility::stringFormat("Socket accepted | %s", result.first->second->getEndPoint().c_str()));
+
+				// Start reading, posts work to the ASIO context
+				result.first->second->readHeader();
+
+				// Dispatch signal
+				socketConnected(result.first->second->getID());
+			}
+
+			// Create new accepting socket
+			acceptNewSocket();
         });
     }
 
+
+	void SocketServer::onPacketReceived(const SocketID& id, const SocketPacket& packet)
+	{
+		packetReceived(id, packet);
+	}
+
+
+	void SocketServer::onSocketDisconnected(const SocketID& id)
+	{
+		std::lock_guard<std::mutex> lock(mConnectionsToRemoveMutex);
+		mConnectionsToRemove.emplace(id);
+	}
+
+
     void SocketServer::process()
     {
-        // first remove obsolete sockets
-        for(const auto& socket_to_remove : mSocketsToRemove)
-        {
-            mSockets.erase(socket_to_remove);
-            mMessageQueue.erase(socket_to_remove);
-        }
-        mSocketsToRemove.clear();
+		// Destroy connections safely
+		std::lock_guard<std::mutex> rm_lock(mConnectionsToRemoveMutex);
+		if (mConnectionsToRemove.empty())
+			return;
 
-        for(auto& pair : mSockets)
-        {
-            const auto& socket_id = pair.first;
-            auto& socket = *pair.second;
-            if(socket.is_open())
-            {
-                // error code
-                asio::error_code err;
-
-                // let the socket send queued messages
-                std::string message;
-                auto message_queue_itr = mMessageQueue.find(socket_id);
-                assert(message_queue_itr!=mMessageQueue.end());
-                auto& message_queue = message_queue_itr->second;
-                while(message_queue.try_dequeue(message))
-                {
-                    socket.send(asio::buffer(message), asio::socket_base::message_end_of_record, err);
-
-                    if(err)
-                        break;
-                }
-
-                // bail on error
-                if (handleError(socket_id, err))
-                    continue;
-
-                // get available bytes
-                size_t available = socket.available(err);
-
-                // bail on error
-                if (handleError(socket_id, err))
-                    continue;
-
-                // receive incoming messages
-                asio::streambuf receivedStreamBuffer;
-                asio::streambuf::mutable_buffers_type bufs = receivedStreamBuffer.prepare(available);
-                socket.receive(bufs, asio::socket_base::message_end_of_record, err);
-
-                // bail on error
-                if (handleError(socket_id, err))
-                    continue;
-
-                // dispatch any received messages
-                for(auto& buf : bufs)
-                {
-                    if(buf.size()>0)
-                    {
-                        std::string received_message(static_cast<char*>(buf.data()), buf.size());
-                        messageReceived.trigger(socket_id, received_message);
-                    }
-                }
-            }
-        }
+		std::lock_guard<std::mutex> lock(mConnectionsMutex);
+		for (const auto& id : mConnectionsToRemove)
+			mConnections.erase(id);
     }
 
 
     void SocketServer::logError(const std::string& message)
     {
-        if(mEnableLog)
-        {
-            nap::Logger::error(*this, message);
-        }
+        if (mEnableLog)
+        	nap::Logger::error(*this, message);
     }
 
 
     void SocketServer::logInfo(const std::string& message)
     {
-        if(mEnableLog)
-        {
-            nap::Logger::info(*this, message);
-        }
+        if (mEnableLog)
+        	nap::Logger::info(*this, message);
     }
 
 
-    void SocketServer::clearQueue()
-    {
-        for(auto& pair : mMessageQueue)
-        {
-            while(pair.second.size_approx()>0)
-            {
-                std::string message;
-                pair.second.try_dequeue(message);
-            }
-        }
-    }
-
-
-    std::vector<std::string> SocketServer::getConnectedClientIDs() const
-    {
-        std::vector<std::string> clients;
-        for(const auto& pair : mSockets)
-        {
-            clients.emplace_back(pair.first);
-        }
-        return clients;
-    }
-
-
-    size_t SocketServer::getConnectedClientsCount() const
-    {
-        return mSockets.size();
-    }
+	uint SocketServer::getConnectionCount()
+	{
+		std::lock_guard lock(mConnectionsMutex);
+		return static_cast<uint>(mConnections.size());
+	}
 }

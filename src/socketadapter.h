@@ -4,27 +4,37 @@
 
 #pragma once
 
-// Nap includes
-#include <nap/resourceptr.h>
-#include <socketthread.h>
+// Local includes
+#include "socketpool.h"
+#include "socketpacket.h"
+#include "socketid.h"
 
 // ASIO includes
-#include <asio/ts/buffer.hpp>
-#include <asio/ts/internet.hpp>
-#include <asio/io_service.hpp>
-#include <asio/system_error.hpp>
+#include <asio/error_code.hpp>
+
+// NAP includes
+#include <nap/resourceptr.h>
+#include <nap/device.h>
 
 namespace nap
 {
-	//////////////////////////////////////////////////////////////////////////
-
-	class NAPAPI SocketAdapter : public Resource
+	/**
+	 * Base class of specific Socket client and server resources.
+	 * process() is automatically called by the thread this adapter links to.
+	 * Both SocketClient & SocketServer extend SocketAdapter.
+	 */
+	class NAPAPI SocketAdapter : public Device
 	{
-		friend class SocketThread;
+		friend class SocketConnection;
 
-		RTTI_ENABLE(Resource)
+		RTTI_ENABLE(Device)
 	public:
-		ResourcePtr<SocketThread> mThread = nullptr; ///< Property: 'Thread' the socket thread the adapter registers itself to
+		/**
+		 * Constructor
+		 * @param service reference to Socket service
+		 */
+		SocketAdapter(SocketService& service) :
+			mService(service) {}
 
 		/**
 		 * Initialization
@@ -34,21 +44,39 @@ namespace nap
 		virtual bool init(utility::ErrorState& errorState) override;
 
 		/**
-		 * called on destruction
+		 *
 		 */
-		virtual void onDestroy() override;
-    public:
-        // Properties
-        bool mAllowFailure 					= false; ///< Property: 'AllowFailure' if binding to socket is allowed to fail on initialization
-	    bool mNoDelay                       = true;   ///< Property: 'No Delay' disables Nagle algorithm
-    protected:
+		virtual bool start(utility::ErrorState& errorState) override;
+
 		/**
-		 * called by a SocketThread
+		 *
+		 */
+		virtual void stop() override;
+
+		/**
+		 *
 		 */
 		virtual void process() = 0;
 
-        bool handleAsioError(const asio::error_code& errorCode, utility::ErrorState& errorState, bool& success);
+		ResourcePtr<SocketPool> mPool;			///< Property: 'Pool' Shared context
+		bool mAllowFailure = false;				///< Property: 'AllowFailure' if binding to socket is allowed to fail on initialization
+	    bool mNoDelay = true;					///< Property: 'No Delay' disables Nagle algorithm
 
-        asio::io_service& getIOService();
+	protected:
+		/**
+		 * Handles asio error, return value based on whether the action should have succeeded
+		 * @param errorCode the asio error code to evaluate
+		 * @param errorState the errorState if the action failed and success is mandatory
+		 * @return whether the program may keep running
+		 */
+        bool handleAsioError(const asio::error_code& errorCode, utility::ErrorState& errorState);
+
+		// Events
+		virtual void onPacketReceived(const SocketID& id, const SocketPacket& packet) {};
+		virtual void onSocketConnected(const SocketID& id) {};
+		virtual void onSocketDisconnected(const SocketID& id) {};
+
+	private:
+		SocketService& mService;
 	};
 }
